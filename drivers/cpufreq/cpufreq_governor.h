@@ -223,8 +223,8 @@ struct od_cpu_dbs_info_s {
 	struct cpu_dbs_info cdbs;
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int freq_lo;
-	unsigned int freq_lo_jiffies;
-	unsigned int freq_hi_jiffies;
+	unsigned int freq_lo_delay_us;
+	unsigned int freq_hi_delay_us;
 	unsigned int sample_type:1;
 };
 
@@ -282,33 +282,6 @@ struct od_ops {
 			unsigned int freq_next, unsigned int relation);
 	void (*freq_increase)(struct cpufreq_policy *policy, unsigned int freq);
 };
-
-static inline int delay_for_sampling_rate(unsigned int sampling_rate)
-{
-	int delay = usecs_to_jiffies(sampling_rate);
-
-	/* We want all CPUs to do sampling nearly on same jiffy */
-	if (num_online_cpus() > 1)
-		delay -= jiffies % delay;
-
-	return delay;
-}
-
-#define declare_show_sampling_rate_min(_gov)				\
-static ssize_t show_sampling_rate_min_gov_sys				\
-(struct kobject *kobj, struct kobj_attribute *attr, char *buf)		\
-{									\
-	struct dbs_data *dbs_data = _gov##_dbs_gov.gdbs_data;		\
-	return sprintf(buf, "%u\n", dbs_data->min_sampling_rate);	\
-}									\
-									\
-static ssize_t show_sampling_rate_min_gov_pol				\
-(struct cpufreq_policy *policy, char *buf)				\
-{									\
-	struct policy_dbs_info *policy_dbs = policy->governor_data;	\
-	struct dbs_data *dbs_data = policy_dbs->dbs_data;		\
-	return sprintf(buf, "%u\n", dbs_data->min_sampling_rate);	\
-}
 
 extern struct mutex dbs_data_mutex;
 unsigned int dbs_update(struct cpufreq_policy *policy);
