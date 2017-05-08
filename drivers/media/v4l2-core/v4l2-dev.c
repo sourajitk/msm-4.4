@@ -865,6 +865,10 @@ int __video_register_device(struct video_device *vdev, int type, int nr,
 		break;
 	case VFL_TYPE_TOUCH:
 		name_base = "v4l-touch";
+                break;
+        case VFL_TYPE_NEKO:
+		type = VFL_TYPE_GRABBER;
+		name_base = "neko";
 		break;
 	default:
 		printk(KERN_ERR "%s called with unknown type: %d\n",
