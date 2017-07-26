@@ -39,6 +39,7 @@
 			qcom,system-reset;
 			qcom,store-hard-reset-reason;
 			qcom,report-key = <1>;
+			qcom,kpdpwr-sw-debounce;
 
 			qcom,pon_1 {
 				qcom,pon-type = <0>;
