@@ -232,6 +232,8 @@ static int pil_subsys_init(struct modem_data *drv,
 {
 	int ret = -EINVAL;
 
+	mfr_failure_reason[0]='\0';
+
 	drv->subsys_desc.name = "modem";
 	drv->subsys_desc.dev = &pdev->dev;
 	drv->subsys_desc.owner = THIS_MODULE;

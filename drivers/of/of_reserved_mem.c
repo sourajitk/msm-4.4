@@ -26,7 +26,7 @@
 #include <linux/slab.h>
 #include <linux/kmemleak.h>
 
-#define MAX_RESERVED_REGIONS	64
+#define MAX_RESERVED_REGIONS	20
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
 static int reserved_mem_count;
 
