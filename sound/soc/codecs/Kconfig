@@ -1018,5 +1018,6 @@ config TAS2557_MISC_STEREO
 
 source "sound/soc/codecs/sdm660_cdc/Kconfig"
 source "sound/soc/codecs/msm_sdw/Kconfig"
+source "sound/soc/codecs/tfa9891/Kconfig"
 
 endmenu
