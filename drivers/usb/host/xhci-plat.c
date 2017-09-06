@@ -37,6 +37,11 @@ static const struct xhci_driver_overrides xhci_plat_overrides __initconst = {
 	.start = xhci_plat_start,
 };
 
+struct usb_xhci_pdata {
+	unsigned	usb3_lpm_capable:1;
+	unsigned	imod_interval;
+};
+
 static void xhci_priv_plat_start(struct usb_hcd *hcd)
 {
 	struct xhci_plat_priv *priv = hcd_to_xhci_priv(hcd);
@@ -67,12 +72,20 @@ static int xhci_priv_resume_quirk(struct usb_hcd *hcd)
 
 static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 {
+
+	struct device_node *node = dev->of_node;
+	struct usb_xhci_pdata *pdata = dev_get_platdata(dev);
+
 	/*
 	 * As of now platform drivers don't provide MSI support so we ensure
 	 * here that the generic code does not try to make a pci_dev from our
 	 * dev struct in order to setup MSI
 	 */
 	xhci->quirks |= XHCI_PLAT;
+
+	if ((node && of_property_read_bool(node, "usb3-lpm-capable")) ||
+			(pdata && pdata->usb3_lpm_capable))
+		xhci->quirks |= XHCI_LPM_SUPPORT | XHCI_SIBEAM_QUIRK;
 }
 
 /* called during probe() after chip reset completes */

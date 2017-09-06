@@ -1850,6 +1850,8 @@ struct xhci_hcd {
 #define XHCI_RESET_PLL_ON_DISCONNECT	BIT_ULL(34)
 #define XHCI_SNPS_BROKEN_SUSPEND    BIT_ULL(35)
 
+#define XHCI_SIBEAM_QUIRK	BIT_ULL(36)
+
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
 	/* There are two roothubs to keep track of bus suspend info for */
@@ -1882,6 +1884,9 @@ struct xhci_hcd {
 
 	/* platform-specific data -- must come last */
 	unsigned long		priv[0] __aligned(sizeof(s64));
+#ifdef CONFIG_ESSENTIAL_SIBEAM
+	struct dma_iommu_mapping *arm_iommu_mapping;
+#endif
 };
 
 /* Platform specific overrides to generic XHCI hc_driver ops */
@@ -2605,4 +2610,9 @@ static inline const char *xhci_decode_ep_context(u32 info, u32 info2, u64 deq,
 int xhci_submit_single_step_set_feature(struct usb_hcd *hcd, struct urb *urb,
 					int is_setup);
 
+// arm mmu setting.
+#ifdef CONFIG_ESSENTIAL_SIBEAM
+int xhci_mem_arm_iommu_create(struct xhci_hcd *xhci);
+void xhci_mem_arm_iommu_destroy(struct xhci_hcd *xhci);
+#endif /*CONFIG_ESSENTIAL_SIBEAM*/
 #endif /* __LINUX_XHCI_HCD_H */

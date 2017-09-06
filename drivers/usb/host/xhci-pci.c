@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/acpi.h>
+#include <linux/msm_pcie.h>
 
 #include "xhci.h"
 #include "xhci-trace.h"
@@ -39,6 +40,7 @@
 #define PCI_DEVICE_ID_FRESCO_LOGIC_PDK	0x1000
 #define PCI_DEVICE_ID_FRESCO_LOGIC_FL1009	0x1009
 #define PCI_DEVICE_ID_FRESCO_LOGIC_FL1400	0x1400
+#define PCI_DEVICE_ID_FRESCO_LOGIC_FL1100	0x1100
 
 #define PCI_VENDOR_ID_ETRON		0x1b6f
 #define PCI_DEVICE_ID_EJ168		0x7023
@@ -90,6 +92,8 @@ static int xhci_pci_reinit(struct xhci_hcd *xhci, struct pci_dev *pdev)
 static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 {
 	struct pci_dev		*pdev = to_pci_dev(dev);
+	u32 val;
+	void __iomem *reg;
 
 	/* Look for vendor-specific quirks */
 	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
@@ -248,6 +252,17 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 	if (xhci->quirks & XHCI_RESET_ON_RESUME)
 		xhci_dbg_trace(xhci, trace_xhci_dbg_quirks,
 				"QUIRK: Resetting on resume");
+	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
+		pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100) {
+		xhci->quirks |= XHCI_LPM_SUPPORT | XHCI_SIBEAM_QUIRK;
+		//Apply Low Power Setting for FL1100LX.
+		xhci_dbg(xhci, "Apply Low Power Setting for FL1100LX.\n");
+		reg = (void __iomem *) xhci->cap_regs + 0x80E0;
+		val = readl(reg);
+		val |= (1 << 15);
+		writel(val, reg);
+		readl(reg);
+	}
 }
 
 #ifdef CONFIG_ACPI
@@ -458,7 +473,18 @@ static int xhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 	if (ret && (xhci->quirks & XHCI_SSIC_PORT_UNUSED))
 		xhci_ssic_port_unused_quirk(hcd, false);
 
-	return ret;
+	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
+		pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100) {
+		ret = xhci_suspend(xhci, do_wakeup);
+		ret = pci_save_state(pdev);
+		if (ret)
+			pr_err("xhci-pci pci_save_state failed :%d\n", ret);
+		ret = msm_pcie_pm_control(MSM_PCIE_SUSPEND, pdev->bus->number, pdev, NULL,
+			(MSM_PCIE_CONFIG_NO_CFG_RESTORE | MSM_PCIE_CONFIG_LINKDOWN));
+		if (ret)
+			pr_err("xhci-pci msm_pcie_pm_control(SUSPEND) failed :%d\n", ret);
+	}
+        return ret;
 }
 
 static int xhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
@@ -494,6 +520,15 @@ static int xhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	if (xhci->quirks & XHCI_PME_STUCK_QUIRK)
 		xhci_pme_quirk(hcd);
 
+	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
+		pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100) {
+		retval = msm_pcie_pm_control(MSM_PCIE_RESUME, pdev->bus->number, pdev, NULL, MSM_PCIE_CONFIG_NO_CFG_RESTORE);
+		if (retval)
+			pr_err("xhci-pci msm_pcie_pm_control(RESUME) failed:%d\n", retval);
+		retval = msm_pcie_recover_config(pdev);
+		if (retval)
+			pr_err("xhci-pci msm_pcie_recover_config failed :%d\n", retval);
+	}
 	retval = xhci_resume(xhci, hibernated);
 	return retval;
 }
