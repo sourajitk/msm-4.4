@@ -355,7 +355,7 @@ static struct dev_config mi2s_rx_cfg[] = {
 	[PRIM_MI2S] = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 2},
 	[SEC_MI2S]  = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 2},
 	[TERT_MI2S] = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 2},
-	[QUAT_MI2S] = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 2},
+	[QUAT_MI2S] = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 1},
 };
 
 static struct dev_config mi2s_tx_cfg[] = {
@@ -2932,9 +2932,15 @@ static const struct snd_soc_dapm_widget msm_dapm_widgets[] = {
 	SND_SOC_DAPM_SPK("Lineout_4 amp", NULL),
 	SND_SOC_DAPM_SPK("hifi amp", msm_hifi_ctrl_event),
 	SND_SOC_DAPM_MIC("Handset Mic", NULL),
+	SND_SOC_DAPM_MIC("Secondary Mic", NULL),
+	SND_SOC_DAPM_MIC("Third Mic", NULL),
+	SND_SOC_DAPM_MIC("Fourth Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("ANCLeft Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic2", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic3", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic4", NULL),
 	SND_SOC_DAPM_MIC("Analog Mic5", NULL),
 	SND_SOC_DAPM_MIC("Analog Mic6", NULL),
 
@@ -3593,6 +3599,9 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 					ARRAY_SIZE(wcd_audio_paths));
 
 	snd_soc_dapm_ignore_suspend(dapm, "Handset Mic");
+	snd_soc_dapm_ignore_suspend(dapm, "Secondary Mic");
+	snd_soc_dapm_ignore_suspend(dapm, "Third Mic");
+	snd_soc_dapm_ignore_suspend(dapm, "Fourth Mic");
 	snd_soc_dapm_ignore_suspend(dapm, "Headset Mic");
 	snd_soc_dapm_ignore_suspend(dapm, "ANCRight Headset Mic");
 	snd_soc_dapm_ignore_suspend(dapm, "ANCLeft Headset Mic");
@@ -3602,6 +3611,9 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic3");
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic4");
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic5");
+	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic2");
+	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic3");
+	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic4");
 	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic5");
 	snd_soc_dapm_ignore_suspend(dapm, "Analog Mic6");
 	snd_soc_dapm_ignore_suspend(dapm, "MADINPUT");
@@ -5151,6 +5163,24 @@ static struct snd_soc_dai_link msm_tasha_fe_dai_links[] = {
 		.ignore_pmdown_time = 1,
 		.codec_dai_name = "tasha_cpe",
 		.codec_name = "tasha_codec",
+	},
+	/* Quaternary MI2S RX DAI Link */
+	{
+		.name = "QUAT_MI2S_RX Hostless",
+		.stream_name = "QUAT_MI2S_RX Hostless",
+		.cpu_dai_name = "QUAT_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+
 	},
 };
 
@@ -7199,16 +7229,6 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 		dev_dbg(&pdev->dev, "msm_prepare_us_euro failed (%d)\n",
 			ret);
 
-	/* Parse pinctrl info from devicetree */
-	ret = msm_get_pinctrl(pdev);
-	if (!ret) {
-		pr_debug("%s: pinctrl parsing successful\n", __func__);
-	} else {
-		dev_dbg(&pdev->dev,
-			"%s: Parsing pinctrl failed with %d. Cannot use Ports\n",
-			__func__, ret);
-		ret = 0;
-	}
 
 	i2s_auxpcm_init(pdev);
 
@@ -7250,7 +7270,7 @@ err:
 		gpio_free(pdata->us_euro_gpio);
 		pdata->us_euro_gpio = 0;
 	}
-	msm_release_pinctrl(pdev);
+
 	devm_kfree(&pdev->dev, pdata);
 	return ret;
 }
