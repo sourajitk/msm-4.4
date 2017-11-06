@@ -466,6 +466,9 @@ static void msm_restart_prepare(const char *cmd)
 				PON_RESTART_REASON_FTM_MODE);
 			__raw_writel(0x6f656d00 | 0xe1, restart_reason);
 		} else {
+#ifdef CONFIG_ESSENTIAL_APR
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_UNKNOWN);
+#endif
 			__raw_writel(0x77665501, restart_reason);
 		}
 	} else {
@@ -492,8 +495,6 @@ static void msm_restart_prepare(const char *cmd)
 			need_warm_reset = true;
 			qpnp_pon_set_restart_reason(REASON_UNKNOWN_RESET);
 			__raw_writel(0x520D450D, restart_reason);
-		} else {
-			qpnp_pon_set_restart_reason(PON_RESTART_REASON_UNKNOWN);
 		}
 	}
 
