@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/power_supply.h>
 #include <linux/msm_pcie.h>
+#include <linux/switch.h>
 
 #define DEV_NAME "sidecar"
 
@@ -19,6 +20,7 @@ struct sidecar_platform_data {
 	struct work_struct dwork;
 	struct wakeup_source wake_src;
 	struct workqueue_struct *dwq;
+	struct switch_dev dock_dev;
 	int irq_handler_gpio;
 	int irq_handler_overcurrent;
 	unsigned int irq_gpio;
@@ -275,6 +277,8 @@ static void sidecar_work_func(struct work_struct *work)
 				pr_info("%s: abnormal is_source=%d, is_sink=%d \n", DEV_NAME, is_source, is_sink);
 			} else if (is_source) {
 				pr_info("%s: in source mode\n", DEV_NAME);
+				switch_set_state(&pdata->dock_dev, 1);
+				sysfs_notify(&pdata->dock_dev.dev->kobj, NULL, "state");
 			} else if (is_sink) {
 				/* Turn ON USB PCIe and SiBeam */
 				pcie_control_power(pdata, irq_state);
@@ -294,6 +298,10 @@ static void sidecar_work_func(struct work_struct *work)
 			/* Device disconnected - Notice userspace*/
 			kobject_uevent(&pdata->dev->kobj, KOBJ_REMOVE);
 			sibeam_control_power(pdata, irq_state);
+		}
+		if (switch_get_state(&pdata->dock_dev)) {
+			switch_set_state(&pdata->dock_dev, 0);
+			sysfs_notify(&pdata->dock_dev.dev->kobj, NULL, "state");
 		}
 		pdata->is_connected = 0;
 		/* Suspend DC_IN when disconnecting */
@@ -694,6 +702,13 @@ static int sidecar_probe(struct platform_device *pdev)
 	pdata->sidecar_class.owner = THIS_MODULE,
 	pdata->sidecar_class.class_attrs = sidecar_attributes;
 
+	/* Create a dock switch */
+	pdata->dock_dev.name = "dock";
+	if (switch_dev_register(&pdata->dock_dev) < 0) {
+		pr_err("%s: register in switch failed\n",__func__);
+		goto fail_irq_request;
+	}
+
 	err = class_register(&pdata->sidecar_class);
 	if (err < 0) {
 		pr_err("couldn't register sidecar class - %d\n", err);
@@ -731,6 +746,8 @@ static int sidecar_remove(struct platform_device *pdev)
 	wakeup_source_trash(&pdata->wake_src);
 
 	gpio_clean(pdata);
+
+	switch_dev_unregister(&pdata->dock_dev);
 
 	class_unregister(&pdata->sidecar_class);
 
