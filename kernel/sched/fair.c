@@ -10347,6 +10347,10 @@ static inline bool nohz_kick_needed(struct rq *rq)
 	if (time_before(now, nohz.next_balance))
 		return false;
 
+	/*
+	 * If energy aware is enabled, do idle load balance if runqueue has
+	 * at least 2 tasks and cpu is overutilized
+	 */
 	if (rq->nr_running >= 2 &&
 	    (!energy_aware() || cpu_overutilized(cpu)))
 		return true;
