@@ -6697,6 +6697,7 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 			unsigned long wake_util, new_util;
 			long spare_cap;
 			int idle_idx = INT_MAX;
+			long spare_cap;
 
 			if (!cpu_online(i))
 				continue;
@@ -6731,6 +6732,13 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 			if (idle_cpu(i))
 				idle_idx = idle_get_state_idx(cpu_rq(i));
 
+
+			/*
+			 * Pre-compute the maximum possible capacity we expect
+			 * to have available on this CPU once the task is
+			 * enqueued here.
+			 */
+			spare_cap = capacity_orig - new_util;
 
 			/*
 			 * Case A) Latency sensitive tasks
