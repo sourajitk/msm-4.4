@@ -447,9 +447,10 @@ static struct msm_soc_info cpu_of_id[] = {
 	/* atollab ID */
 	[443] = {MSM_CPU_ATOLL_AB, "ATOLL-AB"},
 
-	/* SDM660 ID */
-	[317] = {MSM_CPU_SDM660, "SDM660"},
-	[324] = {MSM_CPU_SDA660, "SDA660"},
+	/* Cobalt IDs */
+	[292] = {MSM_CPU_8998, "MSM8998"},
+	[319] = {MSM_CPU_8998, "APQ8098"},
+
 
 	/* Uninitialized IDs are not known to run Linux.
 	 * MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
@@ -1343,6 +1344,14 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 310;
 		strlcpy(dummy_socinfo.build_id, "msm8996-auto - ",
 		sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msm8998()) {
+		dummy_socinfo.id = 292;
+		strlcpy(dummy_socinfo.build_id, "msm8998 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_apq8098()) {
+		dummy_socinfo.id = 319;
+		strlcpy(dummy_socinfo.build_id, "apq8098 - ",
+			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_sm8150()) {
 		dummy_socinfo.id = 339;
 		strlcpy(dummy_socinfo.build_id, "sm8150 - ",
