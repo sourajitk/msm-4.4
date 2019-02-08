@@ -132,15 +132,3 @@ int icnss_wlan_get_dfs_nol(void *info, u16 info_len)
 	return len;
 }
 EXPORT_SYMBOL(icnss_wlan_get_dfs_nol);
-
-void icnss_increment_driver_load_cnt(void)
-{
-	++driver_load_cnt;
-}
-EXPORT_SYMBOL(icnss_increment_driver_load_cnt);
-
-int icnss_get_driver_load_cnt(void)
-{
-	return driver_load_cnt;
-}
-EXPORT_SYMBOL(icnss_get_driver_load_cnt);
