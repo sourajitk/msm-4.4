@@ -92,6 +92,10 @@ COMMON_INC :=	-I$(AUDIO_ROOT)/$(COMMON_DIR)
 
 ############ ASoC Drivers ############
 
+# for MSM8998 sound card driver
+ifdef CONFIG_SND_SOC_MSM8998
+	MACHINE_OBJS += msm8998.o
+endif
 
 # for SDM6xx sound card driver
 ifdef CONFIG_SND_SOC_SDM660
