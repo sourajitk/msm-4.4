@@ -1321,6 +1321,47 @@
 		};
 	};
 
+        qcom,smp2p-adsp {
+                compatible = "qcom,smp2p";
+                qcom,smem = <443>, <429>;
+                interrupts = <GIC_SPI 158 IRQ_TYPE_EDGE_RISING>;
+                mboxes = <&apcs_glb 10>;
+                qcom,local-pid = <0>;
+                qcom,remote-pid = <2>;
+
+                smp2p_rdbg2_out: qcom,smp2p-rdbg2-out {
+                        qcom,entry-name = "rdbg";
+                       	#qcom,smem-state-cells = <1>;
+               	};
+
+               	smp2p_rdbg2_in: qcom,smp2p-rdbg2-in {
+                       	qcom,entry-name = "rdbg";
+                        interrupt-controller;
+                       	#interrupt-cells = <2>;
+                };
+
+        };
+
+       	qcom,smp2p-cdsp {
+               	compatible = "qcom,smp2p";
+               	qcom,smem = <94>, <432>;
+               	interrupts = <GIC_SPI 514 IRQ_TYPE_EDGE_RISING>;
+               	mboxes = <&apcs_glb 30>;
+               	qcom,local-pid = <0>;
+               	qcom,remote-pid = <5>;
+
+               	smp2p_rdbg5_out: qcom,smp2p-rdbg5-out {
+                       	qcom,entry-name = "rdbg";
+                        #qcom,smem-state-cells = <1>;
+               	};
+
+               	smp2p_rdbg5_in: qcom,smp2p-rdbg5-in {
+                       	qcom,entry-name = "rdbg";
+                        interrupt-controller;
+                       	#interrupt-cells = <2>;
+               	};
+        };
+
 	qcom,glink {
 		compatible = "qcom,glink";
 		#address-cells = <1>;
