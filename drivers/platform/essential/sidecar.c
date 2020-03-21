@@ -1,5 +1,5 @@
 /* Essential Sidecar power sequence driver
- * 
+ *
  * */
 
 #include <linux/interrupt.h>
@@ -10,7 +10,6 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/power_supply.h>
-#include <linux/wakelock.h>
 #include <linux/msm_pcie.h>
 
 #define DEV_NAME "sidecar"
@@ -18,7 +17,7 @@
 struct sidecar_platform_data {
 	struct device *dev;
 	struct work_struct dwork;
-	struct wake_lock wl;
+	struct wakeup_source wake_src;
 	struct workqueue_struct *dwq;
 	int irq_handler_gpio;
 	int irq_handler_overcurrent;
@@ -91,7 +90,7 @@ static int pcie_control_power(struct sidecar_platform_data *pdata, int value){
 static int sibeam_control_power(struct sidecar_platform_data *pdata, int value){
 	if (!value){
 		/* We can't go to sleep until sibeam is disabled */
-		wake_lock(&pdata->wl);
+		__pm_stay_awake(&pdata->wake_src);
 		gpio_set_value(pdata->sibeam_3P3_en, 1);
 		gpio_set_value(pdata->sibeam_1P0_en, 1);
 		msleep(50);
@@ -107,7 +106,7 @@ static int sibeam_control_power(struct sidecar_platform_data *pdata, int value){
 		gpio_set_value(pdata->sibeam_1P0_en, 0);
 
 		pr_debug("[%s] sibeam_power_off\n", __func__);
-		wake_unlock(&pdata->wl);
+		__pm_relax(&pdata->wake_src);
 	}
 	return 0;
 }
@@ -677,7 +676,7 @@ static int sidecar_probe(struct platform_device *pdev)
 	pdata->pcie_enabled = 0;
 
 	mutex_init(&pdata->work_func_lock);
-	wake_lock_init(&pdata->wl, WAKE_LOCK_SUSPEND, "Sibeam_wakelock");
+	wakeup_source_init(&pdata->wake_src, "Sibeam_wakelock");
 
 	platform_set_drvdata(pdev, pdata);
 
@@ -720,7 +719,7 @@ static int sidecar_remove(struct platform_device *pdev)
 	flush_workqueue(pdata->dwq);
 	mutex_destroy(&pdata->work_func_lock);
 	destroy_workqueue(pdata->dwq);
-	wake_lock_destroy(&pdata->wl);
+	wakeup_source_trash(&pdata->wake_src);
 
 	gpio_clean(pdata);
 
