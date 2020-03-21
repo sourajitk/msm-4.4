@@ -12,7 +12,6 @@
 
 #include <dt-bindings/interrupt-controller/irq.h>
 #include "../qcom/msm8998-pinctrl.dtsi"
-#include "../qcom/msm-smb138x.dtsi"
 #include "msm8998-pinctrl-mata.dtsi"
 #include "msm8998-camera-sensor-mata.dtsi"
 #include "../qcom/msm8998-mdss-panels.dtsi"
