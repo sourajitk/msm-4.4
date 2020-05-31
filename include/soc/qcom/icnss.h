@@ -23,9 +23,14 @@
 #endif
 
 enum icnss_uevent {
-	ICNSS_UEVENT_FW_READY,
 	ICNSS_UEVENT_FW_CRASHED,
 	ICNSS_UEVENT_FW_DOWN,
+};
+
+enum cnss_cc_src {
+	CNSS_SOURCE_CORE,
+	CNSS_SOURCE_11D,
+	CNSS_SOURCE_USER
 };
 
 struct icnss_uevent_fw_down_data {
@@ -51,6 +56,8 @@ struct icnss_driver_ops {
 	int (*suspend_noirq)(struct device *dev);
 	int (*resume_noirq)(struct device *dev);
 	int (*uevent)(struct device *dev, struct icnss_uevent_data *uevent);
+	int (*idle_shutdown)(struct device *dev);
+	int (*idle_restart)(struct device *dev);
 };
 
 
@@ -82,13 +89,6 @@ struct icnss_wlan_enable_cfg {
 	struct ce_svc_pipe_cfg *ce_svc_cfg;
 	u32 num_shadow_reg_cfg;
 	struct icnss_shadow_reg_cfg *shadow_reg_cfg;
-};
-
-/* MSA Memory Regions Information */
-struct icnss_mem_region_info {
-	uint64_t reg_addr;
-	uint32_t size;
-	uint8_t secure_flag;
 };
 
 /* driver modes */
@@ -160,4 +160,7 @@ extern int icnss_set_wlan_mac_address(const u8 *in, const uint32_t len);
 extern u8 *icnss_get_wlan_mac_address(struct device *dev, uint32_t *num);
 extern int icnss_trigger_recovery(struct device *dev);
 extern void icnss_block_shutdown(bool status);
+extern bool icnss_is_pdr(void);
+extern int icnss_idle_restart(struct device *dev);
+extern int icnss_idle_shutdown(struct device *dev);
 #endif /* _ICNSS_WLAN_H_ */
