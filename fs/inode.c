@@ -2030,6 +2030,12 @@ void inode_set_flags(struct inode *inode, unsigned int flags,
 }
 EXPORT_SYMBOL(inode_set_flags);
 
+void inode_nohighmem(struct inode *inode)
+{
+	mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
+}
+EXPORT_SYMBOL(inode_nohighmem);
+
 /*
  * Generic function to check FS_IOC_SETFLAGS values and reject any invalid
  * configurations.
