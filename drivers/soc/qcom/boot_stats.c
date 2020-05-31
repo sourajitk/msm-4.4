@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014,2016,2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,7 @@
 #include <linux/io.h>
 #include <linux/init.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
@@ -22,6 +23,8 @@
 #include <linux/sched.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/export.h>
+#include <linux/types.h>
 #include <soc/qcom/boot_stats.h>
 
 static void __iomem *mpm_counter_base;
@@ -32,6 +35,7 @@ struct boot_stats __iomem *boot_stats;
 static int mpm_parse_dt(void)
 {
 	struct device_node *np;
+	const __be32 *addrp;
 	u32 freq;
 
 	np = of_find_compatible_node(NULL, NULL, "qcom,msm-imem-boot_stats");
@@ -56,10 +60,17 @@ static int mpm_parse_dt(void)
 	else
 		return -ENODEV;
 
-	if (of_get_address(np, 0, NULL, NULL)) {
+	addrp = of_get_address(np, 0, NULL, NULL);
+	if (addrp) {
 		mpm_counter_base = of_iomap(np, 0);
 		if (!mpm_counter_base) {
 			pr_err("mpm_counter: cant map counter base\n");
+			return -ENODEV;
+		}
+
+		mpm_counter_pa = of_translate_address(np, addrp);
+		if (mpm_counter_pa == OF_BAD_ADDR) {
+			pr_err("mpm_counter: failed to get physical address\n");
 			return -ENODEV;
 		}
 	}
@@ -134,9 +145,8 @@ int boot_stats_init(void)
 
 	print_boot_stats();
 
-	iounmap(boot_stats);
-	iounmap(mpm_counter_base);
-
+	if (!(boot_marker_enabled()))
+		boot_stats_exit();
 	return 0;
 }
 

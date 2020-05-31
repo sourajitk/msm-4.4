@@ -51,6 +51,7 @@ enum pon_power_off_type {
 };
 
 enum pon_restart_reason {
+	/* 0 ~ 31 for common defined features */
 	PON_RESTART_REASON_UNKNOWN		= 0x00,
 	PON_RESTART_REASON_RECOVERY		= 0x01,
 	PON_RESTART_REASON_BOOTLOADER		= 0x02,
@@ -58,19 +59,10 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
 	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
 	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
-	PON_RESTART_REASON_PANIC                = 0x07,
-	PON_RESTART_REASON_WDT                  = 0x08,
-	/* Added by HTC; Available range of PMIC SPARE is 0x0 ~ 0x7f.
-	 * Using 0x6f ~ 0x06 backward to avoid conflict with QCOM's usage.
-	 */
-	PON_RESTART_REASON_FTM_MODE            = 0x6f,
-	PON_RESTART_REASON_DOWNLOAD_MODE       = 0x6e,
-	PON_RESTART_REASON_DOWNLOAD_RUU_MODE   = 0x6d,
-	PON_RESTART_REASON_RAMDUMP_MODE        = 0x6c,
-	PON_RESTART_REASON_CHARGING_MODE       = 0x6b,
-	PON_RESTART_REASON_DDRTEST_MODE        = 0x6a,
-	PON_RESTART_REASON_TAMPERED_MODE       = 0x69,
-	PON_RESTART_REASON_AUTH_FAIL_MODE      = 0x68,
+
+	/* 32 ~ 63 for OEMs/ODMs secific features */
+	PON_RESTART_REASON_OEM_MIN		= 0x20,
+	PON_RESTART_REASON_OEM_MAX		= 0x3f,
 };
 
 #ifdef CONFIG_INPUT_QPNP_POWER_ON
@@ -92,7 +84,7 @@ static inline int qpnp_pon_trigger_config(enum pon_trigger_source pon_src,
 {
 	return -ENODEV;
 }
-static inline int qpnp_pon_wd_config(bool enable)
+int qpnp_pon_wd_config(bool enable)
 {
 	return -ENODEV;
 }

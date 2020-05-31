@@ -306,11 +306,6 @@ config BATTERY_RX51
 	  Say Y here to enable support for battery information on Nokia
 	  RX-51, also known as N900 tablet.
 
-config HTC_BATTERY
-        tristate "htc battery feature"
-        help
-          Say Y to enable htc battery feature.
-
 config CHARGER_ISP1704
 	tristate "ISP1704 USB Charger Detection"
 	depends on USB_PHY
@@ -525,11 +520,6 @@ config AXP20X_POWER
 	help
 	  This driver provides support for the power supply features of
 	  AXP20x PMIC.
-
-config LGE_BATTERY
-	tristate "LGE Battery driver feature"
-	help
-	  Say Y here to enable lge battery driver.
 
 source "drivers/power/reset/Kconfig"
 source "drivers/power/supply/Kconfig"
