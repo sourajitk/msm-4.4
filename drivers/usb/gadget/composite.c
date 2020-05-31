@@ -35,7 +35,8 @@
 	(speed == USB_SPEED_SUPER ?\
 	SSUSB_GADGET_VBUS_DRAW : CONFIG_USB_GADGET_VBUS_DRAW)
 
-static bool disable_l1_for_hs;
+/* disable LPM by default */
+static bool disable_l1_for_hs = true;
 module_param(disable_l1_for_hs, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(disable_l1_for_hs,
 	"Disable support for L1 LPM for HS devices");
@@ -485,14 +486,19 @@ done:
 static u8 encode_bMaxPower(enum usb_device_speed speed,
 		struct usb_configuration *c)
 {
-	unsigned val = CONFIG_USB_GADGET_VBUS_DRAW;
+	unsigned val = c->MaxPower;
 
 	switch (speed) {
 	case USB_SPEED_SUPER:
-		/* with super-speed report 900mA */
-		val = SSUSB_GADGET_VBUS_DRAW;
+		/* with super-speed report 900mA if user hasn't specified */
+		if (!val)
+			val = SSUSB_GADGET_VBUS_DRAW;
+
 		return (u8)(val / SSUSB_GADGET_VBUS_DRAW_UNITS);
 	default:
+		if (!val)
+			val = CONFIG_USB_GADGET_VBUS_DRAW;
+
 		return DIV_ROUND_UP(val, HSUSB_GADGET_VBUS_DRAW_UNITS);
 	}
 }
@@ -517,6 +523,10 @@ static int config_buf(struct usb_configuration *config,
 	c->iConfiguration = config->iConfiguration;
 	c->bmAttributes = USB_CONFIG_ATT_ONE | config->bmAttributes;
 	c->bMaxPower = encode_bMaxPower(speed, config);
+	if (config->cdev->gadget->is_selfpowered) {
+		c->bmAttributes |= USB_CONFIG_ATT_SELFPOWER;
+		c->bMaxPower = 0;
+	}
 
 	/* There may be e.g. OTG descriptors */
 	if (config->descriptors) {
@@ -1655,9 +1665,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 					DBG(cdev,
 					"Config HS device with LPM(L1)\n");
 				}
-			} else if (!disable_l1_for_hs) {
-				cdev->desc.bcdUSB = cpu_to_le16(0x0210);
-				DBG(cdev, "Config HS device with LPM(L1)\n");
 			}
 
 			value = min(w_length, (u16) sizeof cdev->desc);
@@ -2095,7 +2102,7 @@ static ssize_t suspended_show(struct device *dev, struct device_attribute *attr,
 	struct usb_gadget *gadget = dev_to_usb_gadget(dev);
 	struct usb_composite_dev *cdev = get_gadget_data(gadget);
 
-	return sprintf(buf, "%d\n", cdev->suspended);
+	return snprintf(buf, PAGE_SIZE, "%d\n", cdev->suspended);
 }
 static DEVICE_ATTR_RO(suspended);
 

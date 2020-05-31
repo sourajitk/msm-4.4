@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -149,15 +149,17 @@ static void msm_ssusb_qmp_enable_autonomous(struct msm_ssphy_qmp *phy,
 
 	if (enable) {
 		msm_ssusb_qmp_clr_lfps_rxterm_int(phy);
+		val = readb_relaxed(phy->base + autonomous_mode_offset);
+		val |= ARCVR_DTCT_EN;
 		if (phy->phy.flags & DEVICE_IN_SS_MODE) {
-			val =
-			readb_relaxed(phy->base + autonomous_mode_offset);
-			val |= ARCVR_DTCT_EN;
 			val |= ALFPS_DTCT_EN;
 			val &= ~ARCVR_DTCT_EVENT_SEL;
-			writeb_relaxed(val, phy->base + autonomous_mode_offset);
+		} else {
+			val &= ~ALFPS_DTCT_EN;
+			val |= ARCVR_DTCT_EVENT_SEL;
 		}
 
+		writeb_relaxed(val, phy->base + autonomous_mode_offset);
 		/* clamp phy level shifter to perform autonomous detection */
 		writel_relaxed(0x1, phy->vls_clamp_reg);
 	} else {
@@ -471,23 +473,27 @@ static int msm_ssphy_qmp_set_suspend(struct usb_phy *uphy, int suspend)
 	}
 
 	if (suspend) {
-		if (!phy->cable_connected)
+		if (phy->cable_connected) {
+			if (phy->vls_clamp_reg)
+				msm_ssusb_qmp_enable_autonomous(phy, 1);
+		} else {
 			writel_relaxed(0x00,
 			phy->base + phy->phy_reg[USB3_PHY_POWER_DOWN_CONTROL]);
-		else
-			msm_ssusb_qmp_enable_autonomous(phy, 1);
+		}
 
 		/* Make sure above write completed with PHY */
 		wmb();
 
-		clk_disable_unprepare(phy->cfg_ahb_clk);
-		clk_disable_unprepare(phy->aux_clk);
-		clk_disable_unprepare(phy->pipe_clk);
-		if (phy->ref_clk)
-			clk_disable_unprepare(phy->ref_clk);
-		if (phy->ref_clk_src)
-			clk_disable_unprepare(phy->ref_clk_src);
-		phy->clk_enabled = false;
+		if (phy->clk_enabled) {
+			clk_disable_unprepare(phy->cfg_ahb_clk);
+			clk_disable_unprepare(phy->aux_clk);
+			clk_disable_unprepare(phy->pipe_clk);
+			if (phy->ref_clk)
+				clk_disable_unprepare(phy->ref_clk);
+			if (phy->ref_clk_src)
+				clk_disable_unprepare(phy->ref_clk_src);
+			phy->clk_enabled = false;
+		}
 		phy->in_suspend = true;
 		msm_ssphy_power_enable(phy, 0);
 		dev_dbg(uphy->dev, "QMP PHY is suspend\n");
@@ -507,7 +513,8 @@ static int msm_ssphy_qmp_set_suspend(struct usb_phy *uphy, int suspend)
 			writel_relaxed(0x01,
 			phy->base + phy->phy_reg[USB3_PHY_POWER_DOWN_CONTROL]);
 		} else  {
-			msm_ssusb_qmp_enable_autonomous(phy, 0);
+			if (phy->vls_clamp_reg)
+				msm_ssusb_qmp_enable_autonomous(phy, 0);
 		}
 
 		/* Make sure that above write completed with PHY */
@@ -537,6 +544,10 @@ static int msm_ssphy_qmp_notify_disconnect(struct usb_phy *uphy,
 {
 	struct msm_ssphy_qmp *phy = container_of(uphy, struct msm_ssphy_qmp,
 					phy);
+
+	writel_relaxed(0x00,
+		phy->base + phy->phy_reg[USB3_PHY_POWER_DOWN_CONTROL]);
+	readl_relaxed(phy->base + phy->phy_reg[USB3_PHY_POWER_DOWN_CONTROL]);
 
 	dev_dbg(uphy->dev, "QMP phy disconnect notification\n");
 	dev_dbg(uphy->dev, " cable_connected=%d\n", phy->cable_connected);
@@ -642,13 +653,13 @@ static int msm_ssphy_qmp_probe(struct platform_device *pdev)
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 			"vls_clamp_reg");
 	if (!res) {
-		dev_err(dev, "failed getting vls_clamp_reg\n");
-		return -ENODEV;
-	}
-	phy->vls_clamp_reg = devm_ioremap_resource(dev, res);
-	if (IS_ERR(phy->vls_clamp_reg)) {
-		dev_err(dev, "couldn't find vls_clamp_reg address.\n");
-		return PTR_ERR(phy->vls_clamp_reg);
+		dev_dbg(dev, "vls_clamp_reg not passed\n");
+	} else {
+		phy->vls_clamp_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR(phy->vls_clamp_reg)) {
+			dev_err(dev, "couldn't find vls_clamp_reg address.\n");
+			return PTR_ERR(phy->vls_clamp_reg);
+		}
 	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,

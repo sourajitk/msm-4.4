@@ -47,6 +47,7 @@
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
 #define MAX_INST_NAME_LEN          40
+#define MTP_MAX_FILE_SIZE          0xFFFFFFFFL
 
 /* String IDs */
 #define INTERFACE_STRING_INDEX	0
@@ -137,6 +138,7 @@ struct mtp_dev {
 	unsigned dbg_read_index;
 	unsigned dbg_write_index;
 	bool is_ptp;
+	struct mutex  read_mutex;
 };
 
 static struct usb_interface_descriptor mtp_interface_desc = {
@@ -613,15 +615,10 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	struct mtp_dev *dev = fp->private_data;
 	struct usb_composite_dev *cdev = dev->cdev;
 	struct usb_request *req;
-	ssize_t r = count;
-	unsigned xfer;
+	ssize_t r = count, xfer, len;
 	int ret = 0;
-	size_t len = 0;
 
-	DBG(cdev, "mtp_read(%zu)\n", count);
-
-	if (count > MTP_BULK_BUFFER_SIZE)
-		return -EINVAL;
+	DBG(cdev, "mtp_read(%zu) state:%d\n", count, dev->state);
 
 	/* we will block until we're online */
 	DBG(cdev, "mtp_read: waiting for online state\n");
@@ -646,11 +643,18 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	dev->state = STATE_BUSY;
 	spin_unlock_irq(&dev->lock);
 
+	mutex_lock(&dev->read_mutex);
+	if (dev->state == STATE_OFFLINE) {
+		r = -EIO;
+		mutex_unlock(&dev->read_mutex);
+		goto done;
+	}
 requeue_req:
 	/* queue a request */
 	req = dev->rx_req[0];
-	req->length = count;
+	req->length = len;
 	dev->rx_done = 0;
+	mutex_unlock(&dev->read_mutex);
 	ret = usb_ep_queue(dev->ep_out, req, GFP_KERNEL);
 	if (ret < 0) {
 		r = -EIO;
@@ -676,6 +680,7 @@ requeue_req:
 		usb_ep_dequeue(dev->ep_out, req);
 		goto done;
 	}
+	mutex_lock(&dev->read_mutex);
 	if (dev->state == STATE_BUSY) {
 		/* If we got a 0-len packet, throw it back and try again. */
 		if (req->actual == 0)
@@ -689,6 +694,7 @@ requeue_req:
 	} else
 		r = -EIO;
 
+	mutex_unlock(&dev->read_mutex);
 done:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
@@ -867,7 +873,12 @@ static void send_file_work(struct work_struct *data)
 		if (hdr_size) {
 			/* prepend MTP data header */
 			header = (struct mtp_data_header *)req->buf;
-			header->length = __cpu_to_le32(count);
+			/*
+                         * set file size with header according to
+                         * MTP Specification v1.0
+                         */
+			header->length = (count > MTP_MAX_FILE_SIZE) ?
+				MTP_MAX_FILE_SIZE : __cpu_to_le32(count);
 			header->type = __cpu_to_le16(2); /* data packet */
 			header->command = __cpu_to_le16(dev->xfer_command);
 			header->transaction_id =
@@ -939,16 +950,27 @@ static void receive_file_work(struct work_struct *data)
 	}
 
 	DBG(cdev, "receive_file_work(%lld)\n", count);
+	if (!IS_ALIGNED(count, dev->ep_out->maxpacket))
+		DBG(cdev, "%s- count(%lld) not multiple of mtu(%d)\n", __func__,
+						count, dev->ep_out->maxpacket);
 
 	while (count > 0 || write_req) {
 		if (count > 0) {
+			mutex_lock(&dev->read_mutex);
+			if (dev->state == STATE_OFFLINE) {
+				r = -EIO;
+				mutex_unlock(&dev->read_mutex);
+				break;
+			}
 			/* queue a request */
 			read_req = dev->rx_req[cur_buf];
 			cur_buf = (cur_buf + 1) % RX_REQ_MAX;
 
-			read_req->length = (count > MTP_BULK_BUFFER_SIZE
-					? MTP_BULK_BUFFER_SIZE : count);
+			/* some h/w expects size to be aligned to ep's MTU */
+			read_req->length = mtp_rx_req_len;
+
 			dev->rx_done = 0;
+			mutex_unlock(&dev->read_mutex);
 			ret = usb_ep_queue(dev->ep_out, read_req, GFP_KERNEL);
 			if (ret < 0) {
 				r = -EIO;
@@ -961,15 +983,23 @@ static void receive_file_work(struct work_struct *data)
 		if (write_req) {
 			DBG(cdev, "rx %pK %d\n", write_req, write_req->actual);
 			start_time = ktime_get();
+			mutex_lock(&dev->read_mutex);
+			if (dev->state == STATE_OFFLINE) {
+				r = -EIO;
+				mutex_unlock(&dev->read_mutex);
+				break;
+			}
 			ret = vfs_write(filp, write_req->buf, write_req->actual,
 				&offset);
 			DBG(cdev, "vfs_write %d\n", ret);
 			if (ret != write_req->actual) {
 				r = -EIO;
+				mutex_unlock(&dev->read_mutex);
 				if (dev->state != STATE_OFFLINE)
 					dev->state = STATE_ERROR;
 				break;
 			}
+			mutex_unlock(&dev->read_mutex);
 			dev->perf[dev->dbg_write_index].vfs_wtime =
 				ktime_to_us(ktime_sub(ktime_get(), start_time));
 			dev->perf[dev->dbg_write_index].vfs_wbytes = ret;
@@ -992,6 +1022,21 @@ static void receive_file_work(struct work_struct *data)
 					usb_ep_dequeue(dev->ep_out, read_req);
 				break;
 			}
+			if (read_req->status) {
+				r = read_req->status;
+				break;
+			}
+
+			mutex_lock(&dev->read_mutex);
+			if (dev->state == STATE_OFFLINE) {
+				r = -EIO;
+				mutex_unlock(&dev->read_mutex);
+				break;
+			}
+			/* Check if we aligned the size due to MTU constraint */
+			if (count < read_req->length)
+				read_req->actual = (read_req->actual > count ?
+						count : read_req->actual);
 			/* if xfer_file_length is 0xFFFFFFFF, then we read until
 			 * we get a zero length packet
 			 */
@@ -1008,6 +1053,7 @@ static void receive_file_work(struct work_struct *data)
 
 			write_req = read_req;
 			read_req = NULL;
+			mutex_unlock(&dev->read_mutex);
 		}
 	}
 
@@ -1456,6 +1502,7 @@ mtp_function_bind(struct usb_configuration *c, struct usb_function *f)
 			mtp_fullspeed_out_desc.bEndpointAddress;
 	}
 
+	fi_mtp->func_inst.f = &dev->function;
 	DBG(cdev, "%s speed %s: IN/%s, OUT/%s\n",
 		gadget_is_superspeed(c->cdev->gadget) ? "super" :
 		(gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full"),
@@ -1467,20 +1514,24 @@ static void
 mtp_function_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct mtp_dev	*dev = func_to_mtp(f);
+	struct mtp_instance *fi_mtp;
 	struct usb_request *req;
 	int i;
-
+	fi_mtp = container_of(f->fi, struct mtp_instance, func_inst);
 	mtp_string_defs[INTERFACE_STRING_INDEX].id = 0;
+	mutex_lock(&dev->read_mutex);
 	while ((req = mtp_req_get(dev, &dev->tx_idle)))
 		mtp_request_free(req, dev->ep_in);
 	for (i = 0; i < RX_REQ_MAX; i++)
 		mtp_request_free(dev->rx_req[i], dev->ep_out);
 	while ((req = mtp_req_get(dev, &dev->intr_idle)))
 		mtp_request_free(req, dev->ep_intr);
+	mutex_unlock(&dev->read_mutex);
 	dev->state = STATE_OFFLINE;
 	dev->is_ptp = false;
 	kfree(f->os_desc_table);
 	f->os_desc_n = 0;
+	fi_mtp->func_inst.f = NULL;
 }
 
 static int mtp_function_set_alt(struct usb_function *f,
@@ -1818,6 +1869,8 @@ struct usb_function_instance *alloc_inst_mtp_ptp(bool mtp_config)
 	config_group_init_type_name(&fi_mtp->func_inst.group,
 					"", &mtp_func_type);
 
+	mutex_init(&fi_mtp->dev->read_mutex);
+
 	return  &fi_mtp->func_inst;
 }
 EXPORT_SYMBOL_GPL(alloc_inst_mtp_ptp);
@@ -1878,7 +1931,6 @@ struct usb_function *function_alloc_mtp_ptp(struct usb_function_instance *fi,
 	dev->function.setup = mtp_ctrlreq_configfs;
 	dev->function.free_func = mtp_free;
 	dev->is_ptp = !mtp_config;
-	fi->f = &dev->function;
 
 	return &dev->function;
 }
