@@ -295,6 +295,7 @@ static void fw_free_buf(struct firmware_buf *buf)
 {
 	struct firmware_cache *fwc = buf->fwc;
 	if (!fwc) {
+		kfree_const(buf->fw_id);
 		kfree(buf);
 		return;
 	}
@@ -310,7 +311,8 @@ static const char * const fw_path[] = {
 	"/lib/firmware/updates/" UTS_RELEASE,
 	"/lib/firmware/updates",
 	"/lib/firmware/" UTS_RELEASE,
-	"/lib/firmware"
+	"/lib/firmware",
+	"/lib64/firmware"
 };
 
 /*
@@ -817,7 +819,7 @@ static ssize_t firmware_direct_read(struct file *filp, struct kobject *kobj,
 	if (count > fw->size - offset)
 		count = fw->size - offset;
 
-	if (!fw_priv->buf || test_bit(FW_STATUS_DONE, &fw_priv->buf->status)) {
+	if (test_bit(FW_STATUS_DONE, &fw_priv->buf->status)) {
 		ret_count = -ENODEV;
 		goto out;
 	}

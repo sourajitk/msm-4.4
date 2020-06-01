@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,7 +19,6 @@
 #include <linux/irqreturn.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio.h>
-#include <linux/wait.h>
 
 #include "mdss_panel.h"
 #include "mdss_dsi_cmd.h"
@@ -66,19 +65,6 @@
 #define MDSS_DSI_HW_REV_STEP_2		0x2
 
 #define NONE_PANEL "none"
-
-/* RGB calibration */
-#define CALIBRATION_DATA_PATH "/calibration_data"
-#define DISP_FLASH_DATA "disp_flash"
-#define DISP_FLASH_DATA_SIZE 1280
-#define LIGHT_CALI_OFFSET 36
-#define LIGHT_CALI_SIZE 8
-#define LIGHT_RATIO_INDEX 0
-#define LIGHT_R_INDEX 1
-#define LIGHT_G_INDEX 2
-#define LIGHT_B_INDEX 3
-#define GAIN_BASE 10000
-#define FORMULA_GAIN(ori,comp) ((uint16_t)((ori)*(comp)/GAIN_BASE))
 
 enum {		/* mipi dsi panel */
 	DSI_VIDEO_MODE,
@@ -165,19 +151,6 @@ enum dsi_pm_type {
 	DSI_CTRL_PM,
 	DSI_PHY_PM,
 	DSI_MAX_PM
-};
-
-enum alpm_mode_type {
-	ALPM_MODE_OFF,
-	ALPM_MODE_DIM,
-	ALPM_MODE_LOW,
-	ALPM_MODE_HIGH,
-	ALPM_MODE_BRIGHT,
-	ALPM_MODE_TRANSITION_DIM,
-	ALPM_MODE_TRANSITION_LOW,
-	ALPM_MODE_TRANSITION_HIGH,
-	ALPM_MODE_TRANSITION_BRIGHT,
-	ALPM_MODE_MAX,
 };
 
 /*
@@ -421,12 +394,6 @@ struct dsi_err_container {
 	s64 err_time[MAX_ERR_INDEX];
 };
 
-struct dsi_cmd_pos {
-	int line;
-	int offset;
-	int size;
-};
-
 #define DSI_CTRL_LEFT		DSI_CTRL_0
 #define DSI_CTRL_RIGHT		DSI_CTRL_1
 #define DSI_CTRL_CLK_SLAVE	DSI_CTRL_RIGHT
@@ -487,12 +454,12 @@ struct mdss_dsi_ctrl_pdata {
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	bool bklt_en_gpio_invert;
+	bool bklt_en_gpio_state;
+	int avdd_en_gpio;
+	bool avdd_en_gpio_invert;
 	int lcd_mode_sel_gpio;
-	int extra_ldo_vddio_gpio;
-	int extra_ldo_vpnl_gpio;
-	int extra_ldo_lcd_vcl_gpio;
-	bool extra_ldo_vddio_always_on;
 	int bklt_ctrl;	/* backlight ctrl */
+	enum dsi_ctrl_op_mode bklt_dcs_op_mode; /* backlight dcs ctrl mode */
 	bool pwm_pmi;
 	int pwm_period;
 	int pwm_pmic_gpio;
@@ -532,7 +499,6 @@ struct mdss_dsi_ctrl_pdata {
 	struct dsi_panel_cmds off_cmds;
 	struct dsi_panel_cmds lp_on_cmds;
 	struct dsi_panel_cmds lp_off_cmds;
-	struct dsi_panel_cmds gain_cmds;
 	struct dsi_panel_cmds status_cmds;
 	u32 *status_valid_params;
 	u32 *status_cmds_rlen;
@@ -548,8 +514,8 @@ struct mdss_dsi_ctrl_pdata {
 	char pps_buf[DSC_PPS_LEN];	/* dsc pps */
 
 	struct dcs_cmd_list cmdlist;
-	wait_queue_head_t mdp_waitq;
 	struct completion dma_comp;
+	struct completion mdp_comp;
 	struct completion video_comp;
 	struct completion dynamic_comp;
 	struct completion bta_comp;
@@ -557,7 +523,6 @@ struct mdss_dsi_ctrl_pdata {
 	spinlock_t mdp_lock;
 	int mdp_busy;
 	struct mutex mutex;
-	struct mutex mdp_mutex;
 	struct mutex cmd_mutex;
 	struct mutex cmdlist_mutex;
 	struct regulator *lab; /* vreg handle */
@@ -626,41 +591,12 @@ struct mdss_dsi_ctrl_pdata {
 	bool update_phy_timing; /* flag to recalculate PHY timings */
 
 	bool phy_power_off;
-
-	bool dsi_cmd_hs;
-
-	int disp_err_fg_gpio;
-	struct delayed_work err_fg_handler;
-
-	int disp_err_detect_gpio;
-	struct delayed_work err_int_work;
-	bool rdy_err_detect;
-
-	/* alpm brightness setting */
-	struct dsi_panel_cmds alpm_mode_cmds[ALPM_MODE_MAX];
-	enum alpm_mode_type alpm_mode;
-	u32 alpm_bl_threshold;
-	u32 alpm_dim_threshold;
-
-	/* rgb calibration */
-	struct dsi_cmd_pos rgb_gain_pos;
-	struct rgb_gain rgb_gain;
-};
-
-struct te_data {
-	bool irq_enabled;
-	bool err_fg;
-	int irq;
-	unsigned long ts_vsync;
-	unsigned long ts_last_check;
-	spinlock_t spinlock;
 };
 
 struct dsi_status_data {
 	struct notifier_block fb_notifier;
 	struct delayed_work check_status;
 	struct msm_fb_data_type *mfd;
-	struct te_data te;
 };
 
 void mdss_dsi_read_hw_revision(struct mdss_dsi_ctrl_pdata *ctrl);
@@ -693,15 +629,12 @@ int mdss_dsi_wait_for_lane_idle(struct mdss_dsi_ctrl_pdata *ctrl);
 
 irqreturn_t mdss_dsi_isr(int irq, void *ptr);
 irqreturn_t hw_vsync_handler(int irq, void *data);
-irqreturn_t err_fg_handler(int irq, void *data);
-irqreturn_t disp_err_detect_handler(int irq, void *data);
-void disp_err_recovery_work(struct work_struct *work);
 void disable_esd_thread(void);
 void mdss_dsi_irq_handler_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 
 void mdss_dsi_set_tx_power_mode(int mode, struct mdss_panel_data *pdata);
-int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
-			    int frame_rate);
+u64 mdss_dsi_calc_bitclk(struct mdss_panel_info *panel_info, int frame_rate);
+u32 mdss_dsi_get_pclk_rate(struct mdss_panel_info *panel_info, u64 clk_rate);
 int mdss_dsi_clk_refresh(struct mdss_panel_data *pdata, bool update_phy);
 int mdss_dsi_link_clk_init(struct platform_device *pdev,
 		      struct mdss_dsi_ctrl_pdata *ctrl_pdata);
@@ -777,8 +710,8 @@ void mdss_dsi_cfg_lane_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 void mdss_dsi_set_reg(struct mdss_dsi_ctrl_pdata *ctrl, int off,
 	u32 mask, u32 val);
 int mdss_dsi_phy_pll_reset_status(struct mdss_dsi_ctrl_pdata *ctrl);
+int mdss_dsi_check_panel_status(struct mdss_dsi_ctrl_pdata *ctrl, void *arg);
 
-void check_dsi_ctrl_status_ext(void);
 void mdss_dsi_debug_bus_init(struct mdss_dsi_data *sdata);
 
 static inline const char *__mdss_dsi_pm_name(enum dsi_pm_type module)
@@ -1023,16 +956,5 @@ static inline enum dsi_physical_lane_id mdss_dsi_logical_to_physical_lane(
 
 	return i;
 }
-
-static inline void dsi_cmd_data_change_rgb(struct dsi_cmd_desc *cmd,
-			uint32_t offset, uint32_t size, struct rgb_gain *gain) {
-	cmd->payload[offset] = (gain->R >> 8) & 0xff;
-	cmd->payload[offset+1] = gain->R & 0xff;
-	cmd->payload[offset+size] = (gain->G >> 8) & 0xff;
-	cmd->payload[offset+size+1] = gain->G & 0xff;
-	cmd->payload[offset+size+size] = (gain->B >> 8) & 0xff;
-	cmd->payload[offset+size+size+1] = gain->B & 0xff;
-}
-
 
 #endif /* MDSS_DSI_H */

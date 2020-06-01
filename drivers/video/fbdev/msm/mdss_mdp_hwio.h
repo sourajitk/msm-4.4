@@ -51,8 +51,6 @@ static inline u32 mdss_mdp_hwio_mask(struct mdss_mdp_hwio_cfg *cfg, u32 val)
 
 #define MDSS_REG_HW_VERSION				0x0
 #define MDSS_REG_HW_INTR_STATUS				0x10
-#define MDSS_REG_HW_INTR2_CLEAR				0x2C
-#define MDSS_REG_HW_INTR2_STATUS			0x0C
 
 #define MDSS_INTR_MDP				BIT(0)
 #define MDSS_INTR_DSI0				BIT(4)
@@ -831,6 +829,8 @@ enum mdss_mdp_pingpong_index {
 #define MMSS_VBIF_WR_LIM_CONF			0x0C0
 #define MDSS_VBIF_WRITE_GATHER_EN		0x0AC
 
+#define MMSS_VBIF_SRC_ERR		0x194
+#define MMSS_VBIF_ERR_INFO		0x1A0
 #define MMSS_VBIF_XIN_HALT_CTRL0	0x200
 #define MMSS_VBIF_XIN_HALT_CTRL1	0x204
 #define MMSS_VBIF_AXI_HALT_CTRL0	0x208
@@ -851,5 +851,9 @@ enum mdss_mdp_pingpong_index {
 #define MDSS_MDP_REG_TRAFFIC_SHAPER_RD_CLIENT(num)	(0x030 + (num * 4))
 #define MDSS_MDP_REG_TRAFFIC_SHAPER_WR_CLIENT(num)	(0x060 + (num * 4))
 #define MDSS_MDP_REG_TRAFFIC_SHAPER_FIXPOINT_FACTOR	4
+
+#define MDSS_MDP_REG_SPLIT_LINK				0x00060
+#define MDSS_MDP_REG_SPLIT_LINK_LEFT_LINK_EN		BIT(1)
+#define MDSS_MDP_REG_SPLIT_LINK_RIGHT_LINK_EN		BIT(2)
 
 #endif

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,6 +17,7 @@
 
 #include "mdss_dsi.h"
 #include "mdss_mdp.h"
+#include "mdss_debug.h"
 
 /*
  * mdss_check_te_status() - Check the status of panel for TE based ESD.
@@ -157,6 +158,7 @@ void mdss_check_dsi_ctrl_status(struct work_struct *work, uint32_t interval)
 		ctl->ops.wait_pingpong(ctl, NULL);
 
 	pr_debug("%s: DSI ctrl wait for ping pong done\n", __func__);
+	MDSS_XLOG(mipi->mode);
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 	ret = ctrl_pdata->check_status(ctrl_pdata);
@@ -166,7 +168,7 @@ void mdss_check_dsi_ctrl_status(struct work_struct *work, uint32_t interval)
 	if ((mipi->mode == DSI_CMD_MODE) && !ctrl_pdata->burst_mode_enabled)
 		mutex_unlock(&mdp5_data->ov_lock);
 
-	if ((pstatus_data->mfd->panel_power_state == MDSS_PANEL_POWER_ON)) {
+	if (pstatus_data->mfd->panel_power_state == MDSS_PANEL_POWER_ON) {
 		if (ret > 0)
 			schedule_delayed_work(&pstatus_data->check_status,
 				msecs_to_jiffies(interval));

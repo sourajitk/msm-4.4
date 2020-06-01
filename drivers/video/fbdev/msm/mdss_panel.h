@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,9 @@
 #include <linux/stringify.h>
 #include <linux/types.h>
 #include <linux/debugfs.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#include <linux/interrupt.h>
 
 /* panel id type */
 struct panel_id {
@@ -117,7 +120,6 @@ enum {
 enum {
 	MDSS_PANEL_LOW_PERSIST_MODE_OFF = 0,
 	MDSS_PANEL_LOW_PERSIST_MODE_ON,
-	MDSS_PANEL_CALI_RGB_GAIN,
 };
 
 enum {
@@ -143,11 +145,6 @@ enum {
 	SIM_HW_TE_MODE,
 };
 
-struct rgb_gain {
-	uint16_t R;
-	uint16_t G;
-	uint16_t B;
-};
 
 /*
  * enum partial_update_mode - Different modes for partial update feature
@@ -314,6 +311,7 @@ enum mdss_intf_events {
 	MDSS_EVENT_DSI_TIMING_DB_CTRL,
 	MDSS_EVENT_AVR_MODE,
 	MDSS_EVENT_REGISTER_CLAMP_HANDLER,
+	MDSS_EVENT_DSI_DYNAMIC_BITCLK,
 	MDSS_EVENT_MAX,
 };
 
@@ -398,6 +396,7 @@ struct lcd_panel_info {
 	u32 h_active_low;
 	u32 v_back_porch;
 	u32 v_front_porch;
+	u32 v_front_porch_fixed;
 	u32 v_pulse_width;
 	u32 v_active_low;
 	u32 border_clr;
@@ -412,8 +411,9 @@ struct lcd_panel_info {
 	/* Pad height */
 	u32 yres_pad;
 	u32 frame_rate;
+	u32 h_polarity;
+	u32 v_polarity;
 };
-
 
 /* DSI PHY configuration */
 struct mdss_dsi_phy_ctrl {
@@ -539,6 +539,8 @@ struct mipi_panel_info {
 	char lp11_init;
 	u32  init_delay;
 	u32  post_init_delay;
+	u32  num_of_sublinks;
+	u32  lanes_per_sublink;
 };
 
 struct edp_panel_info {
@@ -789,7 +791,6 @@ struct mdss_panel_info {
 	u32 brightness_max;
 	u32 bl_max;
 	u32 bl_min;
-	u32 bl_off;
 	u32 fb_num;
 	u64 clk_rate;
 	u32 clk_min;
@@ -802,19 +803,25 @@ struct mdss_panel_info {
 	u32 rst_seq_len;
 	u32 vic; /* video identification code */
 	u32 deep_color;
+	bool is_ce_mode; /* CE video format */
+	u8 csc_type;
 	struct mdss_rect roi;
 	struct mdss_dsi_dual_pu_roi dual_roi;
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
 	int pwm_period;
 	bool dynamic_fps;
+	bool dynamic_bitclk;
+	u32 *supp_bitclks;
+	u32 supp_bitclk_len;
 	bool ulps_feature_enabled;
 	bool ulps_suspend_enabled;
-	bool alpm_feature_enabled;
 	bool panel_ack_disabled;
 	bool esd_check_enabled;
 	bool allow_phy_power_off;
 	char dfps_update;
+	/* new requested bitclk before it is updated in hw */
+	int new_clk_rate;
 	/* new requested fps before it is updated in hw */
 	int new_fps;
 	/* stores initial fps after boot */
@@ -855,6 +862,7 @@ struct mdss_panel_info {
 	bool is_lpm_mode;
 	bool is_split_display; /* two DSIs in one display, pp split or not */
 	bool use_pingpong_split;
+	bool split_link_enabled;
 
 	/*
 	 * index[0] = left layer mixer, value of 0 not valid
@@ -930,10 +938,6 @@ struct mdss_panel_info {
 	/* HDR properties of display panel*/
 	struct mdss_panel_hdr_properties hdr_properties;
 
-	bool err_flag_enabled;
-
-	u32 err_detect_enabled;
-
 	/* esc clk recommended for the panel */
 	u32 esc_clk_rate_hz;
 };
@@ -991,6 +995,7 @@ struct mdss_panel_data {
 	 * and teardown.
 	 */
 	int (*event_handler) (struct mdss_panel_data *pdata, int e, void *arg);
+	enum mdss_mdp_csc_type (*get_csc_type)(struct mdss_panel_data *pdata);
 	struct device_node *(*get_fb_node)(struct platform_device *pdev);
 
 	struct list_head timings_list;
@@ -1006,6 +1011,10 @@ struct mdss_panel_data {
 	 * are still on; panel will recover after unblank
 	 */
 	bool panel_disable_mode;
+
+	int panel_te_gpio;
+	bool is_te_irq_enabled;
+	struct completion te_done;
 };
 
 struct mdss_panel_debugfs_info {
@@ -1015,6 +1024,23 @@ struct mdss_panel_debugfs_info {
 	u32 override_flag;
 	struct mdss_panel_debugfs_info *next;
 };
+
+static inline void panel_update_te_irq(struct mdss_panel_data *pdata,
+					bool enable)
+{
+	if (!pdata) {
+		pr_err("Invalid Params\n");
+		return;
+	}
+
+	if (enable && !pdata->is_te_irq_enabled) {
+		enable_irq(gpio_to_irq(pdata->panel_te_gpio));
+		pdata->is_te_irq_enabled = true;
+	} else if (!enable && pdata->is_te_irq_enabled) {
+		disable_irq(gpio_to_irq(pdata->panel_te_gpio));
+		pdata->is_te_irq_enabled = false;
+	}
+}
 
 /**
  * mdss_get_panel_framerate() - get panel frame rate based on panel information
@@ -1063,6 +1089,23 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 		break;
 	}
 	return frame_rate;
+}
+
+/*
+ * mdss_panel_get_vtotal_fixed() - return panel device tree vertical height
+ * @pinfo:	Pointer to panel info containing all panel information
+ *
+ * Returns the total height as defined in panel device tree including any
+ * blanking regions which are not visible to user but used to calculate
+ * panel clock.
+ */
+static inline int mdss_panel_get_vtotal_fixed(struct mdss_panel_info *pinfo)
+{
+	return pinfo->yres + pinfo->lcdc.v_back_porch +
+			pinfo->lcdc.v_front_porch_fixed +
+			pinfo->lcdc.v_pulse_width+
+			pinfo->lcdc.border_top +
+			pinfo->lcdc.border_bottom;
 }
 
 /*

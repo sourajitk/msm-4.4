@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,6 @@
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
 #include "mdss_mdp_pp_cache_config.h"
-#include "mdss_debug.h"
 
 struct mdp_csc_cfg mdp_csc_8bit_convert[MDSS_MDP_MAX_CSC] = {
 	[MDSS_MDP_CSC_YUV2RGB_601L] = {
@@ -121,6 +120,18 @@ struct mdp_csc_cfg mdp_csc_8bit_convert[MDSS_MDP_MAX_CSC] = {
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
 		{ 0x0010, 0x00eb, 0x0010, 0x00f0, 0x0010, 0x00f0,},
 	},
+	[MDSS_MDP_CSC_RGB2YUV_709FR] = {
+		0,
+		{
+			0x006d, 0x016e, 0x0025,
+			0xffc5, 0xff3b, 0x0100,
+			0x0100, 0xff17, 0xffe9
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x0080, 0x0080,},
+		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	},
 	[MDSS_MDP_CSC_RGB2YUV_2020L] = {
 		0,
 		{
@@ -168,6 +179,18 @@ struct mdp_csc_cfg mdp_csc_8bit_convert[MDSS_MDP_MAX_CSC] = {
 		{ 0x0, 0x0, 0x0,},
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	},
+	[MDSS_MDP_CSC_RGB2RGB_L] = {
+		0,
+		{
+			0x01b7, 0x0000, 0x0000,
+			0x0000, 0x01b7, 0x0000,
+			0x0000, 0x0000, 0x01b7,
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x10, 0x10, 0x10,},
+		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+		{ 0x10, 0xeb, 0x10, 0xeb, 0x10, 0xeb,},
 	},
 };
 
@@ -268,6 +291,18 @@ struct mdp_csc_cfg mdp_csc_10bit_convert[MDSS_MDP_MAX_CSC] = {
 		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
 		{ 0x0040, 0x03ac, 0x0040, 0x03c0, 0x0040, 0x03c0,},
 	},
+	[MDSS_MDP_CSC_RGB2YUV_709FR] = {
+		0,
+		{
+			0x006d, 0x016e, 0x0025,
+			0xffc5, 0xff3b, 0x0100,
+			0x0100, 0xff17, 0xffe9
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x0200, 0x0200,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+	},
 	[MDSS_MDP_CSC_RGB2YUV_2020L] = {
 		0,
 		{
@@ -315,6 +350,18 @@ struct mdp_csc_cfg mdp_csc_10bit_convert[MDSS_MDP_MAX_CSC] = {
 		{ 0x0, 0x0, 0x0,},
 		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
 		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+	},
+	[MDSS_MDP_CSC_RGB2RGB_L] = {
+		0,
+		{
+			0x01b7, 0x0000, 0x0000,
+			0x0000, 0x01b7, 0x0000,
+			0x0000, 0x0000, 0x01b7,
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x40, 0x40, 0x40,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+		{ 0x40, 0x3ac, 0x40, 0x3ac, 0x40, 0x3ac,},
 	},
 };
 
@@ -453,6 +500,13 @@ static u32 igc_limited[IGC_LUT_ENTRIES] = {
 #define PP_FLAGS_DIRTY_PGC	0x100
 #define PP_FLAGS_DIRTY_SHARP	0x200
 #define PP_FLAGS_DIRTY_PA_DITHER 0x400
+
+#define PP_EARLY_PROGRAM_DIRTY_MASK (PP_FLAGS_DIRTY_PCC | \
+		PP_FLAGS_DIRTY_ENHIST | PP_FLAGS_DIRTY_HIST_COL)
+#define PP_DEFERRED_PROGRAM_DIRTY_MASK (PP_FLAGS_DIRTY_IGC | \
+		PP_FLAGS_DIRTY_PGC | PP_FLAGS_DIRTY_ARGC | \
+		PP_FLAGS_DIRTY_GAMUT | PP_FLAGS_DIRTY_PA | \
+		PP_FLAGS_DIRTY_DITHER | PP_FLAGS_DIRTY_PA_DITHER)
 
 /* Leave space for future features */
 #define PP_FLAGS_RESUME_COMMIT	0x10000000
@@ -2330,7 +2384,9 @@ static void pp_dspp_opmode_config(struct mdss_mdp_ctl *ctl, u32 num,
 		*opmode |= MDSS_MDP_DSPP_OP_ARGC_LUT_EN;
 }
 
-static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
+static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer,
+					u32 pp_program_mask, int *op_mode)
+
 {
 	u32 ad_flags, flags, dspp_num, opmode = 0, ad_bypass;
 	struct mdp_pgc_lut_data *pgc_config;
@@ -2345,6 +2401,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	u32 mixer_cnt;
 	u32 mixer_id[MDSS_MDP_INTF_MAX_LAYERMIXER];
 	int side;
+
+	opmode = *op_mode;
 
 	if (!mixer || !mixer->ctl || !mixer->ctl->mdata)
 		return -EINVAL;
@@ -2366,19 +2424,23 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	}
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-	if ((mdata->pp_block_off.dspp_gamut_off != U32_MAX) &&
-			(pp_driver_ops.gamut_clk_gate_en))
-		pp_driver_ops.gamut_clk_gate_en(base +
+	if (pp_program_mask & PP_PROGRAM_GAMUT) {
+		if ((mdata->pp_block_off.dspp_gamut_off != U32_MAX) &&
+				(pp_driver_ops.gamut_clk_gate_en))
+			pp_driver_ops.gamut_clk_gate_en(base +
 					mdata->pp_block_off.dspp_gamut_off);
-
+	}
 	if (disp_num < MDSS_BLOCK_DISP_NUM) {
 		pp_sts = &mdss_pp_res->pp_disp_sts[disp_num];
 		pp_sts->side_sts = side;
 
-		ret = pp_hist_setup(&opmode, MDSS_PP_DSPP_CFG | dspp_num, mixer,
-				pp_sts);
-		if (ret)
-			goto dspp_exit;
+		if (pp_program_mask & PP_PROGRAM_HIST) {
+			ret = pp_hist_setup(&opmode,
+					MDSS_PP_DSPP_CFG | dspp_num, mixer,
+					pp_sts);
+			if (ret)
+				goto dspp_exit;
+		}
 
 		flags = mdss_pp_res->pp_disp_flags[disp_num];
 	} else {
@@ -2399,7 +2461,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	if ((!flags) && (!(opmode)) && (!ad_flags))
 		goto dspp_exit;
 
-	if (flags & PP_FLAGS_DIRTY_PA) {
+	if ((flags & PP_FLAGS_DIRTY_PA) &&
+		(pp_program_mask & PP_PROGRAM_PA)) {
 		if (!pp_ops[PA].pp_set_config) {
 			if (mdata->mdp_rev >= MDSS_MDP_HW_REV_103) {
 				pa_v2_cfg_data =
@@ -2420,7 +2483,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 					DSPP);
 		}
 	}
-	if (flags & PP_FLAGS_DIRTY_PCC) {
+	if ((flags & PP_FLAGS_DIRTY_PCC) &&
+		(pp_program_mask & PP_PROGRAM_PCC)) {
 		if (!pp_ops[PCC].pp_set_config)
 			pp_pcc_config(flags, base + MDSS_MDP_REG_DSPP_PCC_BASE,
 					pp_sts,
@@ -2437,7 +2501,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		}
 	}
 
-	if (flags & PP_FLAGS_DIRTY_IGC) {
+	if ((flags & PP_FLAGS_DIRTY_IGC) &&
+		(pp_program_mask & PP_PROGRAM_IGC)) {
 		if (!pp_ops[IGC].pp_set_config) {
 			pp_igc_config(flags,
 			      mdata->mdp_base + MDSS_MDP_REG_IGC_DSPP_BASE,
@@ -2457,7 +2522,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 				DSPP);
 	}
 
-	if (flags & PP_FLAGS_DIRTY_ENHIST) {
+	if ((flags & PP_FLAGS_DIRTY_ENHIST) &&
+		(pp_program_mask & PP_PROGRAM_HIST)) {
 		if (!pp_ops[HIST_LUT].pp_set_config) {
 			pp_enhist_config(flags,
 				base + MDSS_MDP_REG_DSPP_HIST_LUT_BASE,
@@ -2481,7 +2547,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		}
 	}
 
-	if (flags & PP_FLAGS_DIRTY_DITHER) {
+	if ((flags & PP_FLAGS_DIRTY_DITHER) &&
+		(pp_program_mask & PP_PROGRAM_DITHER)) {
 		if (!pp_ops[DITHER].pp_set_config && addr) {
 			pp_dither_config(addr, pp_sts,
 				&mdss_pp_res->dither_disp_cfg[disp_num]);
@@ -2491,7 +2558,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 			      &mdss_pp_res->dither_disp_cfg[disp_num], DSPP);
 		}
 	}
-	if (flags & PP_FLAGS_DIRTY_GAMUT) {
+	if ((flags & PP_FLAGS_DIRTY_GAMUT) &&
+		(pp_program_mask & PP_PROGRAM_GAMUT)) {
 		if (!pp_ops[GAMUT].pp_set_config) {
 			pp_gamut_config(&mdss_pp_res->gamut_disp_cfg[disp_num],
 					 base, pp_sts);
@@ -2508,7 +2576,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		}
 	}
 
-	if (flags & PP_FLAGS_DIRTY_PGC) {
+	if ((flags & PP_FLAGS_DIRTY_PGC) &&
+		(pp_program_mask & PP_PROGRAM_PGC)) {
 		pgc_config = &mdss_pp_res->pgc_disp_cfg[disp_num];
 		if (pp_ops[GC].pp_set_config) {
 			if (mdata->pp_block_off.dspp_pgc_off == U32_MAX) {
@@ -2534,6 +2603,7 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		}
 	}
 	if (flags & PP_FLAGS_DIRTY_PA_DITHER &&
+		(pp_program_mask & PP_PROGRAM_PA_DITHER) &&
 		pp_ops[PA_DITHER].pp_set_config) {
 		pp_ops[PA_DITHER].pp_set_config(base, pp_sts,
 					&mdss_pp_res->pa_dither_cfg[disp_num],
@@ -2544,7 +2614,7 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		pp_dspp_opmode_config(ctl, dspp_num, pp_sts, mdata->mdp_rev,
 					&opmode);
 
-	if (ad_hw) {
+	if (ad_hw && (pp_program_mask & PP_PROGRAM_AD)) {
 		mutex_lock(&ad->lock);
 		ad_flags = ad->reg_sts;
 		if (ad_flags & PP_AD_STS_DIRTY_DATA)
@@ -2559,6 +2629,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 				ad_hw->base + MDSS_MDP_REG_AD_TFILT_CTRL);
 			writel_relaxed(ad->cfg.mode | MDSS_AD_AUTO_TRIGGER,
 				ad_hw->base + MDSS_MDP_REG_AD_MODE_SEL);
+			ad->last_str = 0xFF & readl_relaxed(ad_hw->base +
+				MDSS_MDP_REG_AD_STR_OUT);
 		}
 
 		pp_ad_bypass_config(ad, ctl, ad_hw->num, &ad_bypass);
@@ -2574,6 +2646,9 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		ctl->flush_bits |= BIT(13 + dspp_num);
 
 	wmb();
+
+	*op_mode = opmode;
+
 dspp_exit:
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
 	return ret;
@@ -2588,6 +2663,7 @@ int mdss_mdp_dest_scaler_setup_locked(struct mdss_mdp_mixer *mixer)
 	u32 op_mode;
 	u32 mask;
 	char *ds_offset;
+	int mixer_num = 0;
 
 	if (!mixer || !mixer->ctl || !mixer->ctl->mdata)
 		return -EINVAL;
@@ -2647,6 +2723,14 @@ int mdss_mdp_dest_scaler_setup_locked(struct mdss_mdp_mixer *mixer)
 			pr_err("Failed setup destination scaler\n");
 			return ret;
 		}
+		/* Set LM Flush in order to update DS registers */
+		if (ds->flags & DS_SCALE_UPDATE) {
+			mutex_lock(&ctl->flush_lock);
+			mixer_num = mdss_mdp_mixer_get_hw_num(mixer);
+			ctl->flush_bits |=
+					BIT(mixer_num < 5 ? 6 + mixer_num : 20);
+			mutex_unlock(&ctl->flush_lock);
+		}
 		/*
 		 * Clearing the flag because we don't need to program the block
 		 * for each commit if there is no change.
@@ -2692,6 +2776,8 @@ void mdss_mdp_pp_dest_scaler_resume(struct mdss_mdp_ctl *ctl)
 int mdss_mdp_pp_setup(struct mdss_mdp_ctl *ctl)
 {
 	int ret = 0;
+	struct mdss_mdp_pp_program_info pp_program_info = {
+							PP_PROGRAM_ALL, 0, 0};
 
 	if ((!ctl->mfd) || (!mdss_pp_res))
 		return -EINVAL;
@@ -2703,87 +2789,20 @@ int mdss_mdp_pp_setup(struct mdss_mdp_ctl *ctl)
 		ret = -EPERM;
 		goto error;
 	}
-	ret = mdss_mdp_pp_setup_locked(ctl);
+	ret = mdss_mdp_pp_setup_locked(ctl, &pp_program_info);
 error:
 	mutex_unlock(&ctl->lock);
 
 	return ret;
 }
 
-int mdss_mdp_pp_commit_notify(struct mdss_mdp_ctl *ctl, bool early)
-{
-	struct mdss_data_type *mdata;
-	u32 flags, pa_v2_flags;
-	u32 disp_num;
-	int ret = 0;
-
-	if ((!ctl) || (!ctl->mfd) || (!mdss_pp_res) || (!ctl->mdata))
-		return -EINVAL;
-
-	mdata = ctl->mdata;
-	if (!mdata->pp_reg_bus_clt)
-		return 0;
-
-	ATRACE_BEGIN(__func__);
-	disp_num = ctl->mfd->index;
-
-	mutex_lock(&mdss_pp_mutex);
-
-	/*
-	 * if there's no early wake up this could end up being called before
-	 * ctl_restore. In such cases we'll still need to go through resume
-	 * anyway so set the flag now
-	 */
-	if (mdata->idle_pc)
-		mdss_pp_res->pp_disp_flags[disp_num] |= PP_FLAGS_RESUME_COMMIT;
-
-	flags = mdss_pp_res->pp_disp_flags[disp_num];
-	if (pp_ops[PA].pp_set_config)
-		pa_v2_flags = mdss_pp_res->pa_v2_disp_cfg[disp_num].flags;
-	else
-		pa_v2_flags =
-			mdss_pp_res->pa_v2_disp_cfg[disp_num].pa_v2_data.flags;
-
-	if (IS_PP_RESUME_COMMIT(flags)) {
-		if (!early) {
-			pr_debug("disable reg vote\n");
-			/* remove vote late in commit */
-			ret = mdss_update_reg_bus_vote(mdata->pp_reg_bus_clt,
-						       VOTE_INDEX_DISABLE);
-			mdss_pp_res->pp_disp_flags[disp_num] &=
-					~PP_FLAGS_RESUME_COMMIT;
-		} else if (mdata->idle_pc || IS_PP_LUT_DIRTY(flags) ||
-			   IS_SIX_ZONE_DIRTY(flags, pa_v2_flags)) {
-			/*
-			 * place high vote if coming out of idle pc or heavy
-			 * programming of LUTs is needed
-			 */
-			pr_debug("placing high reg vote (0x%x 0x%x)\n",
-				 flags, pa_v2_flags);
-			ret = mdss_update_reg_bus_vote(mdata->pp_reg_bus_clt,
-						       VOTE_INDEX_HIGH);
-		} else {
-			/*
-			 * no high vote required, clear flag to avoid the need
-			 * to come in here at end of commit
-			 */
-			pr_debug("split high reg vote (0x%x 0x%x)\n",
-				 flags, pa_v2_flags);
-			mdss_pp_res->pp_disp_flags[disp_num] &=
-					~PP_FLAGS_RESUME_COMMIT;
-		}
-	}
-	mutex_unlock(&mdss_pp_mutex);
-
-	ATRACE_END(__func__);
-
-	return ret;
-}
-
-int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl)
+int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl,
+				struct mdss_mdp_pp_program_info *info)
 {
 	struct mdss_data_type *mdata;
 	int ret = 0, i;
+	u32 flags, pa_v2_flags;
+	u32 max_bw_needed;
 	u32 mixer_cnt;
 	u32 mixer_id[MDSS_MDP_INTF_MAX_LAYERMIXER];
 	u32 disp_num;
@@ -2791,8 +2810,16 @@ int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl)
 	bool valid_ad_panel = true;
 	if ((!ctl) || (!ctl->mfd) || (!mdss_pp_res) || (!ctl->mdata))
 		return -EINVAL;
-
-	ATRACE_BEGIN(__func__);
+	if (!info) {
+		pr_err("pp_program_info is NULL");
+		return -EINVAL;
+	}
+	if (!(info->pp_program_mask == PP_NORMAL_PROGRAM_MASK ||
+		info->pp_program_mask == PP_DEFER_PROGRAM_MASK ||
+		info->pp_program_mask == PP_PROGRAM_ALL)) {
+		pr_err("Invalid pp program mask : %x ", info->pp_program_mask);
+		return -EINVAL;
+	}
 
 	mdata = ctl->mdata;
 	/* treat fb_num the same as block logical id*/
@@ -2818,7 +2845,7 @@ int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl)
 		(ctl->mfd->panel_info->type != WRITEBACK_PANEL));
 
 	if (valid_mixers && (mixer_cnt <= mdata->nmax_concurrent_ad_hw) &&
-		valid_ad_panel) {
+		valid_ad_panel && (info->pp_program_mask & PP_PROGRAM_AD)) {
 		ret = mdss_mdp_ad_setup(ctl->mfd);
 		if (ret < 0)
 			pr_warn("ad_setup(disp%d) returns %d\n", disp_num, ret);
@@ -2826,35 +2853,94 @@ int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl)
 
 	mutex_lock(&mdss_pp_mutex);
 
+	if (disp_num < MDSS_BLOCK_DISP_NUM)
+		flags = mdss_pp_res->pp_disp_flags[disp_num];
+	else
+		flags = 0;
+
+	if (pp_ops[PA].pp_set_config)
+		pa_v2_flags = mdss_pp_res->pa_v2_disp_cfg[disp_num].flags;
+	else
+		pa_v2_flags =
+			mdss_pp_res->pa_v2_disp_cfg[disp_num].pa_v2_data.flags;
+	/*
+	 * If a LUT based PP feature needs to be reprogrammed during resume,
+	 * increase the register bus bandwidth to maximum frequency
+	 * in order to speed up the register reprogramming.
+	 */
+	if (info->pp_program_mask & PP_DEFER_PROGRAM_MASK) {
+		max_bw_needed = (IS_PP_RESUME_COMMIT(flags) &&
+					(IS_PP_LUT_DIRTY(flags) ||
+					IS_SIX_ZONE_DIRTY(flags, pa_v2_flags)));
+		if (mdata->pp_reg_bus_clt && max_bw_needed) {
+			ret = mdss_update_reg_bus_vote(mdata->pp_reg_bus_clt,
+					VOTE_INDEX_HIGH);
+			if (ret)
+				pr_err("Updated reg_bus_scale failed, ret = %d",
+									ret);
+		}
+	}
+
 	if (ctl->mixer_left) {
-		pp_mixer_setup(ctl->mixer_left);
-		pp_dspp_setup(disp_num, ctl->mixer_left);
-		pp_ppb_setup(ctl->mixer_left);
+		if (info->pp_program_mask & PP_DEFER_PROGRAM_MASK) {
+			pp_mixer_setup(ctl->mixer_left);
+			pp_dspp_setup(disp_num, ctl->mixer_left,
+				info->pp_program_mask, &info->pp_opmode_left);
+			pp_ppb_setup(ctl->mixer_left);
+		} else {
+			pp_dspp_setup(disp_num, ctl->mixer_left,
+				info->pp_program_mask, &info->pp_opmode_left);
+		}
 	}
 	if (ctl->mixer_right) {
-		pp_mixer_setup(ctl->mixer_right);
-		pp_dspp_setup(disp_num, ctl->mixer_right);
-		pp_ppb_setup(ctl->mixer_right);
+		if (info->pp_program_mask & PP_DEFER_PROGRAM_MASK) {
+			pp_mixer_setup(ctl->mixer_right);
+			pp_dspp_setup(disp_num, ctl->mixer_right,
+				info->pp_program_mask, &info->pp_opmode_right);
+			pp_ppb_setup(ctl->mixer_right);
+		} else {
+			pp_dspp_setup(disp_num, ctl->mixer_right,
+				info->pp_program_mask, &info->pp_opmode_right);
+		}
 	}
 
-	if (valid_mixers && (mixer_cnt <= mdata->nmax_concurrent_ad_hw) &&
-		valid_ad_panel) {
-		ret = mdss_mdp_ad_ipc_reset(ctl->mfd);
-		if (ret < 0)
-			pr_warn("ad_setup(disp%d) returns %d\n", disp_num, ret);
+	if (info->pp_program_mask & PP_PROGRAM_AD) {
+		if (valid_mixers &&
+			(mixer_cnt <= mdata->nmax_concurrent_ad_hw) &&
+			valid_ad_panel) {
+			ret = mdss_mdp_ad_ipc_reset(ctl->mfd);
+			if (ret < 0)
+				pr_warn("ad_setup(disp%d) returns %d\n",
+							disp_num, ret);
+		}
 	}
 
-	/* clear dirty flag */
-	if (disp_num < MDSS_BLOCK_DISP_NUM) {
-		/* clear everything but resume commit bit */
-		mdss_pp_res->pp_disp_flags[disp_num] &= PP_FLAGS_RESUME_COMMIT;
-		if (disp_num < mdata->nad_cfgs)
-			mdata->ad_cfgs[disp_num].reg_sts = 0;
+	if (info->pp_program_mask & PP_NORMAL_PROGRAM_MASK) {
+		mdss_pp_res->pp_disp_flags[disp_num] &=
+				~PP_EARLY_PROGRAM_DIRTY_MASK;
 	}
+	if (info->pp_program_mask & PP_DEFER_PROGRAM_MASK) {
+		/* clear dirty flag */
+		if (disp_num < MDSS_BLOCK_DISP_NUM) {
+			mdss_pp_res->pp_disp_flags[disp_num] &=
+				~PP_DEFERRED_PROGRAM_DIRTY_MASK;
+			if (disp_num < mdata->nad_cfgs)
+				mdata->ad_cfgs[disp_num].reg_sts = 0;
+		}
 
+		if (mdata->pp_reg_bus_clt && max_bw_needed) {
+			ret = mdss_update_reg_bus_vote(mdata->pp_reg_bus_clt,
+					VOTE_INDEX_DISABLE);
+			if (ret)
+				pr_err("Updated reg_bus_scale failed, ret = %d",
+									ret);
+		}
+		if (IS_PP_RESUME_COMMIT(flags))
+			mdss_pp_res->pp_disp_flags[disp_num] &=
+				~PP_FLAGS_RESUME_COMMIT;
+	}
 	mutex_unlock(&mdss_pp_mutex);
 exit:
-	ATRACE_END(__func__);
 	return ret;
 }
 
@@ -3245,6 +3331,8 @@ int mdss_mdp_pp_overlay_init(struct msm_fb_data_type *mfd)
 		pr_err("Invalid mfd %pK mdata %pK\n", mfd, mdata);
 		return -EPERM;
 	}
+	if (mfd->index >= (MDP_BLOCK_MAX - MDP_LOGICAL_BLOCK_DISP_0))
+		return 0;
 
 	if (mdata->nad_cfgs)
 		mfd->mdp.ad_calc_bl = pp_ad_calc_bl;
@@ -3328,8 +3416,7 @@ static int pp_ad_calc_bl(struct msm_fb_data_type *mfd, int bl_in, int *bl_out,
 		return -EPERM;
 	}
 
-	if (!ad->bl_mfd || !ad->bl_mfd->panel_info ||
-		!ad->bl_att_lut) {
+	if (!ad->bl_mfd || !ad->bl_mfd->panel_info) {
 		pr_err("Invalid ad info: bl_mfd = 0x%pK, ad->bl_mfd->panel_info = 0x%pK, bl_att_lut = 0x%pK\n",
 			ad->bl_mfd,
 			(!ad->bl_mfd) ? NULL : ad->bl_mfd->panel_info,
@@ -6067,7 +6154,8 @@ int mdss_mdp_ad_input(struct msm_fb_data_type *mfd,
 			}
 			mutex_unlock(&ad->lock);
 			mutex_lock(&mfd->bl_lock);
-			bl = mdss_brightness_to_bl(mfd->panel_info, bl);
+			MDSS_BRIGHT_TO_BL(bl, bl, mfd->panel_info->bl_max,
+					mfd->panel_info->brightness_max);
 			mdss_fb_set_backlight(mfd, bl);
 			mutex_unlock(&mfd->bl_lock);
 			mutex_lock(&ad->lock);
@@ -6881,7 +6969,7 @@ static int is_valid_calib_dspp_addr(char __iomem *ptr)
 			ret = MDP_PP_OPS_READ | MDP_PP_OPS_WRITE;
 			break;
 		/* Dither enable/disable */
-		} else if ((ptr == base + MDSS_MDP_REG_DSPP_DITHER_DEPTH)) {
+		} else if (ptr == base + MDSS_MDP_REG_DSPP_DITHER_DEPTH) {
 			ret = MDP_PP_OPS_READ | MDP_PP_OPS_WRITE;
 			break;
 		/* Six zone and mem color */
@@ -7623,6 +7711,13 @@ static int pp_mfd_release_all(struct msm_fb_data_type *mfd)
 {
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	int ret = 0;
+	if (!mfd || !mdata) {
+		pr_err("Invalid mfd %pK mdata %pK\n", mfd, mdata);
+		return -EPERM;
+	}
+
+	if (mfd->index >= (MDP_BLOCK_MAX - MDP_LOGICAL_BLOCK_DISP_0))
+		return ret;
 
 	if (mdata->nad_cfgs) {
 		ret = pp_mfd_ad_release_all(mfd);

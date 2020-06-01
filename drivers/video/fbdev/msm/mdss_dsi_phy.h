@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,7 +42,7 @@ enum phy_mode {
  * @frate_hz - Frame rate for which phy timing parameters are to be calculated.
  */
 int mdss_dsi_phy_calc_timing_param(struct mdss_panel_info *pinfo, u32 phy_rev,
-		u32 frate_hz);
+		u64 clk_rate);
 
 /*
  * mdss_dsi_phy_v3_init() - initialization sequence for DSI PHY rev v3
@@ -115,4 +115,13 @@ int mdss_dsi_phy_v3_wait_for_lanes_stop_state(struct mdss_dsi_ctrl_pdata *ctrl,
  * assumes that the link and core clocks are already on.
  */
 int mdss_dsi_phy_v3_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl, bool enable);
+
+/**
+ * mdss_dsi_phy_v3_idle_pc_exit() - Called after Idle Power Collapse exit
+ * @ctrl: pointer to DSI controller structure
+ *
+ * This function is called after Idle Power Collapse, so driver
+ * can perform any sequence required after the Idle PC exit.
+ */
+void mdss_dsi_phy_v3_idle_pc_exit(struct mdss_dsi_ctrl_pdata *ctrl);
 #endif /* MDSS_DSI_PHY_H */

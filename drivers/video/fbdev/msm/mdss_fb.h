@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -234,50 +234,20 @@ struct msm_mdp_interface {
 	int (*input_event_handler)(struct msm_fb_data_type *mfd);
 	void (*footswitch_ctrl)(bool on);
 	int (*pp_release_fnc)(struct msm_fb_data_type *mfd);
+	void (*signal_retire_fence)(struct msm_fb_data_type *mfd,
+					int retire_cnt);
 	void *private1;
 };
 
 #define IS_CALIB_MODE_BL(mfd) (((mfd)->calib_mode) & MDSS_CALIB_MODE_BL)
-
-/*
- * This maps android backlight level 0 to 255 into driver backlight level
- * 0 always maps to 0 backlight level, and any value from 1-brightness_max
- * will map to range bl_min to bl_max rounding to closest integer
- */
-static inline int mdss_brightness_to_bl(struct mdss_panel_info *pinfo, int val)
-{
-	int bl_lvl, bl_min, bl_range;
-
-	if (val <= 0)
-		return 0;
-	else if (val >= pinfo->brightness_max)
-		return pinfo->bl_max;
-
-	/* ensure tha bl_min is at least 1 since 0 is mapped to off */
-	bl_min = pinfo->bl_min ? : 1;
-	bl_range = pinfo->bl_max - bl_min;
-	bl_lvl = DIV_ROUND_CLOSEST((val - 1) * bl_range,
-				   pinfo->brightness_max - 1);
-
-	return bl_min + bl_lvl;
-}
-
-static inline int mdss_bl_to_brightness(struct mdss_panel_info *pinfo, int val)
-{
-	int bl_lvl, bl_min, bl_range;
-
-	bl_min = pinfo->bl_min ? : 1;
-	if (val < bl_min)
-		return 0;
-	else if (val >= pinfo->bl_max)
-		return pinfo->brightness_max;
-
-	/* ensure that value returned is at least 1 since 0 is mapped to off */
-	bl_range = pinfo->bl_max - bl_min;
-	bl_lvl = val - bl_min;
-
-	return 1 + mult_frac(bl_lvl, pinfo->brightness_max - 1, bl_range);
-}
+#define MDSS_BRIGHT_TO_BL(out, v, bl_max, max_bright) do {\
+				out = (2 * (v) * (bl_max) + max_bright);\
+				do_div(out, 2 * max_bright);\
+				} while (0)
+#define MDSS_BL_TO_BRIGHT(out, v, bl_max, max_bright) do {\
+				out = (2 * ((v) * (max_bright)) + (bl_max));\
+				do_div(out, 2 * bl_max);\
+				} while (0)
 
 struct mdss_fb_file_info {
 	struct file *file;
@@ -322,6 +292,7 @@ struct msm_fb_data_type {
 	int op_enable;
 	u32 fb_imgType;
 	int panel_reconfig;
+	int force_null_commit;
 	u32 panel_orientation;
 
 	u32 dst_format;
@@ -425,6 +396,12 @@ static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 	}
 }
 
+/* Function returns true for split link */
+static inline bool is_panel_split_link(struct msm_fb_data_type *mfd)
+{
+	return mfd && mfd->panel_info && mfd->panel_info->split_link_enabled;
+}
+
 /* Function returns true for either any kind of dual display */
 static inline bool is_panel_split(struct msm_fb_data_type *mfd)
 {
@@ -508,5 +485,4 @@ void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 						struct fb_var_screeninfo *var);
 void mdss_fb_calc_fps(struct msm_fb_data_type *mfd);
 void mdss_fb_idle_pc(struct msm_fb_data_type *mfd);
-void mdss_fb_pp_timeout(struct msm_fb_data_type *mfd);
 #endif /* MDSS_FB_H */

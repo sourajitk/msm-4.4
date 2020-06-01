@@ -223,12 +223,14 @@ static struct mdp_input_layer *__create_layer_list(
 
 		layer->flags = layer32->flags;
 		layer->pipe_ndx = layer32->pipe_ndx;
+		layer->rect_num = layer32->rect_num;
 		layer->horz_deci = layer32->horz_deci;
 		layer->vert_deci = layer32->vert_deci;
 		layer->z_order = layer32->z_order;
 		layer->transp_mask = layer32->transp_mask;
 		layer->bg_color = layer32->bg_color;
 		layer->blend_op = layer32->blend_op;
+		layer->alpha = layer32->alpha;
 		layer->color_space = layer32->color_space;
 		layer->src_rect = layer32->src_rect;
 		layer->dst_rect = layer32->dst_rect;
@@ -1310,10 +1312,10 @@ static int __from_user_pgc_lut_data_legacy(
 		return -EFAULT;
 
 	if (num_r_stages > GC_LUT_SEGMENTS || num_b_stages > GC_LUT_SEGMENTS
-	    || num_r_stages > GC_LUT_SEGMENTS || !num_r_stages || !num_b_stages
+	    || num_g_stages > GC_LUT_SEGMENTS || !num_r_stages || !num_b_stages
 	    || !num_g_stages) {
 		pr_err("invalid number of stages r_stages %d b_stages %d g_stages %d\n",
-		       num_r_stages, num_b_stages, num_r_stages);
+		       num_r_stages, num_b_stages, num_g_stages);
 		return -EFAULT;
 	}
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -432,6 +432,7 @@ static int mdss_debug_base_release(struct inode *inode, struct file *file)
 	mutex_unlock(&mdss_debug_lock);
 	return 0;
 }
+
 /**
  * mdss_debug_base_is_valid_range - verify if requested memory range is valid
  * @off: address offset in bytes
@@ -486,6 +487,9 @@ static ssize_t mdss_debug_base_offset_write(struct file *file,
 
 	if (sscanf(buf, "%5x %x", &off, &cnt) != 2)
 		return -EFAULT;
+
+	if (off % sizeof(u32))
+		return -EINVAL;
 
 	if (off > dbg->max_offset)
 		return -EINVAL;
@@ -562,6 +566,9 @@ static ssize_t mdss_debug_base_reg_write(struct file *file,
 	if (cnt < 2)
 		return -EFAULT;
 
+	if (off % sizeof(u32))
+		return -EFAULT;
+
 	if (off >= dbg->max_offset)
 		return -EFAULT;
 
@@ -606,6 +613,9 @@ static ssize_t mdss_debug_base_reg_read(struct file *file,
 			mutex_unlock(&mdss_debug_lock);
 			return -ENOMEM;
 		}
+
+		if (dbg->off % sizeof(u32))
+			return -EFAULT;
 
 		ptr = dbg->base + dbg->off;
 		tot = 0;
@@ -760,6 +770,7 @@ static int parse_dt_xlog_dump_list(const u32 *arr, int count,
 	u32 len;
 	int i, total_names, total_xin_ids, rc;
 	u32 *offsets = NULL;
+	struct property *pp;
 
 	/* Get the property with the name of the ranges */
 	total_names = of_property_count_strings(pdev->dev.of_node,
@@ -769,8 +780,8 @@ static int parse_dt_xlog_dump_list(const u32 *arr, int count,
 		total_names = 0;
 	}
 
-	of_find_property(pdev->dev.of_node, xin_prop, &total_xin_ids);
-	if (total_xin_ids > 0) {
+	pp = of_find_property(pdev->dev.of_node, xin_prop, &total_xin_ids);
+	if (pp && total_xin_ids > 0) {
 		total_xin_ids /= sizeof(u32);
 		offsets = kcalloc(total_xin_ids, sizeof(u32), GFP_KERNEL);
 		if (offsets) {
@@ -1113,7 +1124,7 @@ static ssize_t mdss_debug_perf_bw_limit_read(struct file *file,
 	struct mdss_data_type *mdata = file->private_data;
 	struct mdss_max_bw_settings *temp_settings;
 	int len = 0, i;
-	char buf[256];
+	char buf[256] = {'\0'};
 
 	if (!mdata)
 		return -ENODEV;
@@ -1439,6 +1450,9 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id,
 						break;
 					case MDSS_MDP_INTF2:
 						block_id = DISPLAY_MISR_DSI1;
+						break;
+					case MDSS_MDP_INTF3:
+						block_id = DISPLAY_MISR_HDMI;
 						break;
 					default:
 						pr_err("Unmatch INTF for Dual LM single display configuration, INTF:%d\n",
@@ -1873,7 +1887,6 @@ void mdss_dsi_debug_bus_init(struct mdss_dsi_data *sdata)
 	sdata->dbg_bus_size = 0;
 
 	switch (sdata->shared_data->hw_rev) {
-	case MDSS_DSI_HW_REV_200:
 	case MDSS_DSI_HW_REV_201:
 		sdata->dbg_bus = dsi_dbg_bus_sdm660;
 		sdata->dbg_bus_size = ARRAY_SIZE(dsi_dbg_bus_sdm660);
