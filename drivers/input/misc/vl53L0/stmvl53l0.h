@@ -29,30 +29,20 @@
 #define STMVL53L0_DRV_NAME	"stmvl53l0"
 #define STMVL53L0_SLAVE_ADDR	(0x52>>1)
 
-#define DRIVER_VERSION		"1.0.5.1"
+#define DRIVER_VERSION		"1.0.5"
 #define I2C_M_WR			0x00
 /* #define INT_POLLING_DELAY	20 */
 
-/* if don't want to have output from vl6180_dbgmsg, comment out #DEBUG macro */
-#define DEBUG
-/* #define vl6180_dbgmsg(str, args...) pr_debug("%s: " str, __func__, ##args) */
+/* if don't want to have output from vl53l0_dbgmsg, comment out #DEBUG macro */
+// #define DEBUG
 #define vl53l0_dbgmsg(str, args...)	\
-	pr_err("[LASER] %s: " str, __func__, ##args)
-/* #define vl6180_errmsg(str, args...) pr_err("%s: " str, __func__, ##args) */
+	pr_debug("%s: " str, __func__, ##args)
 #define vl53l0_errmsg(str, args...) \
-	pr_err("[LASER] %s: " str, __func__, ##args)
+	pr_err("%s: " str, __func__, ##args)
 
-#define timing_dbgmsg(str, args...)	\
-	pr_err("[LASER][T_DEBUG] %s: " str, __func__, ##args)
+#define VL53L0_VDD_MIN      2800000//2600000
+#define VL53L0_VDD_MAX      2800000//3000000
 
-#define E(x...) pr_err("[LASER] " x)
-#define D(x...) pr_debug("[LASER] " x)
-#define I(x...) pr_info("[LASER] " x)
-#define W(x...) pr_warn("[LASER] " x)
-
-#define VL53L0_VDD_MIN      2600000
-#define VL53L0_VDD_MAX      3000000
-#define HTC
 typedef enum {
 	NORMAL_MODE = 0,
 	OFFSETCALIB_MODE = 1,
@@ -100,17 +90,6 @@ struct stmvl53l0_parameter {
 };
 
 /*
- *  IOCTL Custom Use Case
- */
-struct stmvl53l0_custom_use_case {
-    FixPoint1616_t  signalRateLimit;
-    FixPoint1616_t  sigmaLimit;
-    uint32_t        preRangePulsePeriod;
-    uint32_t        finalRangePulsePeriod;
-    uint32_t        timingBudget;
-};
-
-/*
  *  driver data structs
  */
 struct stmvl53l0_data {
@@ -154,29 +133,6 @@ struct stmvl53l0_data {
 	unsigned int offsetCalDistance;
 	unsigned int xtalkCalDistance;
 
-    /* Calibration values */
-    uint32_t refSpadCount;
-    uint8_t isApertureSpads;
-    uint8_t VhvSettings;
-    uint8_t PhaseCal;
-    int32_t OffsetMicroMeter;
-    FixPoint1616_t XTalkCompensationRateMegaCps;
-    uint32_t  setCalibratedValue;
-
-#ifdef HTC
-    /* HTC */
-    int offset_kvalue;
-    FixPoint1616_t xtalk_kvalue;
-#endif
-    int offset_count;
-    int xtalk_count;
-    const char *calib_file;
-
-    /* Custom values set by app */
-    FixPoint1616_t signalRateLimit;
-    FixPoint1616_t sigmaLimit;
-    uint32_t        preRangePulsePeriod;
-    uint32_t        finalRangePulsePeriod;
 
 	/* Range Data */
 	VL53L0_RangingMeasurementData_t rangeData;
@@ -196,10 +152,8 @@ struct stmvl53l0_data {
 	uint32_t 	   timingBudget;
 	/* Use this threshold to force restart ranging */
 	uint32_t       noInterruptCount;
-    /* Use this flag to denote use case*/
-    uint8_t         useCase;
-    /* Use this flag to indicate an update of use case */
-    uint8_t         updateUseCase;
+	/* Use this flag to use long ranging*/
+	int			  useLongRange;
 
 	/* Polling thread */
 	struct task_struct *poll_thread;
@@ -208,32 +162,15 @@ struct stmvl53l0_data {
 
 	/* Recent interrupt status */
 	uint32_t		interruptStatus;
-	struct mutex work_mutex;
 
-    struct timer_list timer;
-    uint32_t flushCount;
+	struct mutex work_mutex;
+	unsigned int en_gpio;
+	struct pinctrl *ts_pinctrl;
+	struct pinctrl_state *pinctrl_state_active;
 
 	/* Debug */
 	unsigned int enableDebug;
-	unsigned int enableTimingDebug;
 	uint8_t interrupt_received;
-
-#ifdef HTC
-    /* HTC */
-    u32 pwdn_gpio;
-    u32 laser_irq_gpio;
-    struct regulator *camio_1v8;
-    struct regulator *power_2v8;
-    struct pinctrl *pinctrl;
-    struct pinctrl_state *gpio_state_init;
-    struct device *sensor_dev;
-    struct class *laser_class;
-    struct device *laser_dev;
-    bool laser_power;
-    FixPoint1616_t cali_distance;
-    u8 cali_status;
-    u8 int_status;
-#endif
 };
 
 /*
@@ -244,12 +181,12 @@ struct stmvl53l0_module_fn_t {
 	void (*deinit)(void *);
 	int (*power_up)(void *, unsigned int *);
 	int (*power_down)(void *);
+	int (*query_power_status)(void *);
 };
 
 
 
 int stmvl53l0_setup(struct stmvl53l0_data *data);
 void stmvl53l0_cleanup(struct stmvl53l0_data *data);
-int stmvl53l0_read_calibration(struct stmvl53l0_data *vl53l0_data);
 
 #endif /* STMVL53L0_H */

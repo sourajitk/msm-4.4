@@ -42,7 +42,7 @@
  * API includes
  */
 #include "vl53l0_api.h"
-#include "vl53l0_def.h"
+#include <media/vl53l0_def.h>
 #include "vl53l0_platform.h"
 #include "stmvl53l0-cci.h"
 #include "stmvl53l0-i2c.h"
@@ -179,8 +179,15 @@ static const struct v4l2_subdev_internal_ops msm_tof_internal_ops = {
 static long msm_tof_subdev_ioctl(struct v4l2_subdev *sd,
 			unsigned int cmd, void *arg)
 {
-	vl53l0_dbgmsg("Subdev_ioctl not handled\n");
-	return 0;
+	struct cci_data *cci_object = NULL;
+	int32_t rc = 0;
+
+	cci_object = v4l2_get_subdevdata(sd);
+	if (cmd == MSM_SD_SHUTDOWN)
+		cci_object->power_up = 0;
+
+	vl53l0_dbgmsg("cmd = %d power_up = %d", cmd, cci_object->power_up);
+	return rc;
 }
 
 static int32_t msm_tof_power(struct v4l2_subdev *sd, int on)
@@ -346,7 +353,7 @@ static struct platform_driver stmvl53l0_platform_driver = {
 		.name = STMVL53L0_DRV_NAME,
 		.owner = THIS_MODULE,
 		.of_match_table = st_stmvl53l0_dt_match,
-                .probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 };
 
@@ -407,6 +414,13 @@ int stmvl53l0_power_down_cci(void *cci_object)
 	data->power_up = 0;
 	vl53l0_dbgmsg("End\n");
 	return ret;
+}
+
+int stmvl53l0_cci_power_status(void *cci_object)
+{
+	struct cci_data *data = (struct cci_data *)cci_object;
+
+	return data->power_up;
 }
 
 int stmvl53l0_init_cci(void)
