@@ -307,9 +307,6 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* novation SoundControl XL */
 	{ USB_DEVICE(0x1235, 0x0061), .driver_info = USB_QUIRK_RESET_RESUME },
 
-	/* Google USB-C 3.5mm Audio Dongle */
-	{ USB_DEVICE(0x18d1, 0x5025), .driver_info = USB_QUIRK_NO_LPM },
-
 	{ }  /* terminating entry must be last */
 };
 
