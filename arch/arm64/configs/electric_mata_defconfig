@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 4.4.247 Kernel Configuration
+# Linux/arm64 4.4.250 Kernel Configuration
 #
 CONFIG_ARM64=y
 CONFIG_64BIT=y
@@ -2110,6 +2110,7 @@ CONFIG_SPI_QUP=y
 CONFIG_SPI_SPIDEV=y
 # CONFIG_SPI_TLE62X0 is not set
 # CONFIG_SPI_SLAVE is not set
+CONFIG_SPI_DYNAMIC=y
 CONFIG_SPMI=y
 CONFIG_SPMI_MSM_PMIC_ARB=y
 CONFIG_VIRTSPMI_MSM_PMIC_ARB=y
