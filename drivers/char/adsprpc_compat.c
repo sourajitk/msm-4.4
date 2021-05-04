@@ -133,7 +133,6 @@ struct compat_fastrpc_ioctl_control {
 	union {
 		struct compat_fastrpc_ctrl_latency lp;
 		struct compat_fastrpc_ctrl_smmu smmu;
-		struct compat_fastrpc_ctrl_kalloc kalloc;
 	};
 };
 
