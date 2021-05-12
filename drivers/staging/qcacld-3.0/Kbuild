@@ -2,7 +2,7 @@
 # an external module.  Determine which mechanism is being used
 
 # Treat -misleading-indentation errors as warnings.
-subdir-ccflags-y := $(call cc-disable-warning, misleading-indentation)
+subdir-ccflags-y := -Wno-error
 
 ifeq ($(MODNAME),)
 	KERNEL_BUILD := 1
