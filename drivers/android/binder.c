@@ -3117,7 +3117,7 @@ static void binder_transaction(struct binder_proc *proc,
 		t->from = thread;
 	else
 		t->from = NULL;
-	t->sender_euid = proc->cred->euid;
+	t->sender_euid = task_euid(proc->tsk);
 	t->to_proc = target_proc;
 	t->to_thread = target_thread;
 	t->code = tr->code;
@@ -4641,8 +4641,6 @@ static int binder_thread_release(struct binder_proc *proc,
 	 */
 	if (thread->looper & BINDER_LOOPER_STATE_POLL)
 		wake_up_pollfree(&thread->wait);
-
-	binder_inner_proc_unlock(thread->proc);
 
 	/*
 	 * This is needed to avoid races between wake_up_pollfree() above and
