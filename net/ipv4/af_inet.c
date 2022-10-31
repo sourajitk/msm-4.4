@@ -89,7 +89,6 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/random.h>
 #include <linux/slab.h>
-#include <linux/netfilter/xt_qtaguid.h>
 
 #include <asm/uaccess.h>
 
@@ -393,8 +392,18 @@ lookup_protocol:
 
 	if (sk->sk_prot->init) {
 		err = sk->sk_prot->init(sk);
-		if (err)
+		if (err) {
 			sk_common_release(sk);
+			goto out;
+		}
+	}
+
+	if (!kern) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
+			goto out;
+		}
 	}
 out:
 	return err;
@@ -416,9 +425,6 @@ int inet_release(struct socket *sock)
 	if (sk) {
 		long timeout;
 
-#ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
-		qtaguid_untag(sock, true);
-#endif
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
 

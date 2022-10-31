@@ -54,6 +54,34 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ufs.h>
 
+static void ufshcd_log_slowio(struct ufs_hba *hba,
+		struct ufshcd_lrb *lrbp, s64 iotime_us)
+{
+	sector_t lba = -1;
+	int transfer_len = -1;
+	u8 opcode = 0xff;
+
+	if (likely(iotime_us < hba->slowio_us))
+		return;
+
+	hba->slowio_cnt++;
+
+	if (lrbp->cmd) {
+		opcode = (u8)(*lrbp->cmd->cmnd);
+		if (opcode == READ_10 || opcode == WRITE_10) {
+			if (lrbp->cmd->request && lrbp->cmd->request->bio)
+				lba = lrbp->cmd->request->bio->
+					bi_iter.bi_sector;
+			transfer_len = be32_to_cpu(
+				lrbp->ucd_req_ptr->sc.exp_data_transfer_len);
+		}
+	}
+	dev_err_ratelimited(hba->dev,
+		"Slow UFS (%lld): time = %lld us, opcode = %02x, lba = %ld, "
+		"len = %d\n", hba->slowio_cnt, iotime_us, opcode, lba,
+		transfer_len);
+}
+
 #ifdef CONFIG_DEBUG_FS
 
 static int ufshcd_tag_req_type(struct request *rq)
@@ -116,6 +144,9 @@ static void update_req_stats(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	s64 delta = ktime_us_delta(lrbp->complete_time_stamp,
 		lrbp->issue_time_stamp);
 
+	/* Log for slow I/O */
+	ufshcd_log_slowio(hba, lrbp, delta);
+
 	/* update general request statistics */
 	if (hba->ufs_stats.req_stats[TS_TAG].count == 0)
 		hba->ufs_stats.req_stats[TS_TAG].min = delta;
@@ -165,6 +196,11 @@ static inline void ufshcd_update_error_stats(struct ufs_hba *hba, int type)
 static inline
 void update_req_stats(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 {
+	s64 delta = ktime_us_delta(lrbp->complete_time_stamp,
+		lrbp->issue_time_stamp);
+
+	/* Log for slow I/O */
+	ufshcd_log_slowio(hba, lrbp, delta);
 }
 
 static inline
@@ -226,6 +262,9 @@ void ufshcd_update_query_stats(struct ufs_hba *hba,
 #define UFS_IOCTL_BLKROSET      BLKROSET
 
 #define UFSHCD_DEFAULT_LANES_PER_DIRECTION		2
+
+/* for manual gc */
+#define UFSHCD_MANUAL_GC_HOLD_HIBERN8		2000	/* 2 seconds */
 
 #define ufshcd_toggle_vreg(_dev, _vreg, _on)				\
 	({                                                              \
@@ -3698,8 +3737,12 @@ int ufshcd_query_descriptor(struct ufs_hba *hba,
 	int retries;
 
 	for (retries = QUERY_REQ_RETRIES; retries > 0; retries--) {
-		err = __ufshcd_query_descriptor(hba, opcode, idn, index,
+		err = -EAGAIN;
+		down_read(&hba->query_lock);
+		if (!ufshcd_is_link_hibern8(hba))
+			err = __ufshcd_query_descriptor(hba, opcode, idn, index,
 						selector, desc_buf, buf_len);
+		up_read(&hba->query_lock);
 		if (!err || err == -EINVAL)
 			break;
 	}
@@ -7743,6 +7786,7 @@ static int ufshcd_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		case QUERY_ATTR_IDN_EE_CONTROL:
 		case QUERY_ATTR_IDN_EE_STATUS:
 		case QUERY_ATTR_IDN_SECONDS_PASSED:
+		case QUERY_ATTR_IDN_MANUAL_GC_STATUS:
 			index = 0;
 			break;
 		case QUERY_ATTR_IDN_DYN_CAP_NEEDED:
@@ -7795,6 +7839,7 @@ static int ufshcd_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		case QUERY_FLAG_IDN_PURGE_ENABLE:
 		case QUERY_FLAG_IDN_FPHYRESOURCEREMOVAL:
 		case QUERY_FLAG_IDN_BUSY_RTC:
+		case QUERY_FLAG_IDN_MANUAL_GC_CONT:
 			break;
 		default:
 			goto out_einval;
@@ -8722,8 +8767,8 @@ static int ufshcd_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	enum ufs_pm_level pm_lvl;
 	enum ufs_dev_pwr_mode req_dev_pwr_mode;
 	enum uic_link_state req_link_state;
+	bool need_upwrite = false;
 
-	hba->pm_op_in_progress = 1;
 	if (!ufshcd_is_shutdown_pm(pm_op)) {
 		pm_lvl = ufshcd_is_runtime_pm(pm_op) ?
 			 hba->rpm_lvl : hba->spm_lvl;
@@ -8733,6 +8778,15 @@ static int ufshcd_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		req_dev_pwr_mode = UFS_POWERDOWN_PWR_MODE;
 		req_link_state = UIC_LINK_OFF_STATE;
 	}
+
+	if (ufshcd_is_runtime_pm(pm_op) &&
+			req_link_state == UIC_LINK_HIBERN8_STATE &&
+			ufshcd_is_auto_hibern8_supported(hba)) {
+		need_upwrite = true;
+		if (!down_write_trylock(&hba->query_lock))
+			return -EBUSY;
+	}
+	hba->pm_op_in_progress = 1;
 
 	/*
 	 * If we can't transition into any of the low power modes
@@ -8855,6 +8909,8 @@ enable_gating:
 	ufshcd_release_all(hba);
 out:
 	hba->pm_op_in_progress = 0;
+	if (need_upwrite)
+		up_write(&hba->query_lock);
 
 	if (ret)
 		ufshcd_update_error_stats(hba, UFS_ERR_SUSPEND);
@@ -9159,7 +9215,7 @@ static inline ssize_t ufshcd_pm_lvl_store(struct device *dev,
 	return count;
 }
 
-static ssize_t ufshcd_rpm_lvl_show(struct device *dev,
+static ssize_t rpm_lvl_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct ufs_hba *hba = dev_get_drvdata(dev);
@@ -9188,24 +9244,13 @@ static ssize_t ufshcd_rpm_lvl_show(struct device *dev,
 	return curr_len;
 }
 
-static ssize_t ufshcd_rpm_lvl_store(struct device *dev,
+static ssize_t rpm_lvl_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	return ufshcd_pm_lvl_store(dev, attr, buf, count, true);
 }
 
-static void ufshcd_add_rpm_lvl_sysfs_nodes(struct ufs_hba *hba)
-{
-	hba->rpm_lvl_attr.show = ufshcd_rpm_lvl_show;
-	hba->rpm_lvl_attr.store = ufshcd_rpm_lvl_store;
-	sysfs_attr_init(&hba->rpm_lvl_attr.attr);
-	hba->rpm_lvl_attr.attr.name = "rpm_lvl";
-	hba->rpm_lvl_attr.attr.mode = S_IRUGO | S_IWUSR;
-	if (device_create_file(hba->dev, &hba->rpm_lvl_attr))
-		dev_err(hba->dev, "Failed to create sysfs for rpm_lvl\n");
-}
-
-static ssize_t ufshcd_spm_lvl_show(struct device *dev,
+static ssize_t spm_lvl_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct ufs_hba *hba = dev_get_drvdata(dev);
@@ -9234,21 +9279,34 @@ static ssize_t ufshcd_spm_lvl_show(struct device *dev,
 	return curr_len;
 }
 
-static ssize_t ufshcd_spm_lvl_store(struct device *dev,
+static ssize_t spm_lvl_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	return ufshcd_pm_lvl_store(dev, attr, buf, count, false);
 }
 
-static void ufshcd_add_spm_lvl_sysfs_nodes(struct ufs_hba *hba)
+/*
+ * Values permitted 0, 1, 2.
+ * 0 -> Disable IO latency histograms (default)
+ * 1 -> Enable IO latency histograms
+ * 2 -> Zero out IO latency histograms
+ */
+static ssize_t
+latency_hist_store(struct device *dev, struct device_attribute *attr,
+		   const char *buf, size_t count)
 {
-	hba->spm_lvl_attr.show = ufshcd_spm_lvl_show;
-	hba->spm_lvl_attr.store = ufshcd_spm_lvl_store;
-	sysfs_attr_init(&hba->spm_lvl_attr.attr);
-	hba->spm_lvl_attr.attr.name = "spm_lvl";
-	hba->spm_lvl_attr.attr.mode = S_IRUGO | S_IWUSR;
-	if (device_create_file(hba->dev, &hba->spm_lvl_attr))
-		dev_err(hba->dev, "Failed to create sysfs for spm_lvl\n");
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	long value;
+
+	if (kstrtol(buf, 0, &value))
+		return -EINVAL;
+	if (value == BLK_IO_LAT_HIST_ZERO) {
+		memset(&hba->io_lat_read, 0, sizeof(hba->io_lat_read));
+		memset(&hba->io_lat_write, 0, sizeof(hba->io_lat_write));
+	} else if (value == BLK_IO_LAT_HIST_ENABLE ||
+		 value == BLK_IO_LAT_HIST_DISABLE)
+		hba->latency_hist_enabled = value;
+	return count;
 }
 
 static ssize_t ufs_sysfs_read_desc_param(struct ufs_hba *hba,
@@ -9339,11 +9397,259 @@ static void ufshcd_add_desc_sysfs_nodes(struct device *dev)
 			__func__, ret);
 }
 
+ssize_t
+latency_hist_show(struct device *dev, struct device_attribute *attr,
+		  char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	size_t written_bytes;
+
+	written_bytes = blk_latency_hist_show("Read", &hba->io_lat_read,
+			buf, PAGE_SIZE);
+	written_bytes += blk_latency_hist_show("Write", &hba->io_lat_write,
+			buf + written_bytes, PAGE_SIZE - written_bytes);
+
+	return written_bytes;
+}
+
+/**
+ * Two sysfs entries for slow I/O monitoring:
+ *  - slowio_us:  watermark time in us. Can be updated by writing.
+ *  - slowio_cnt: number of I/O count. Can be reseted by writing any value.
+*/
+static ssize_t
+slowio_us_store(struct device *dev, struct device_attribute *attr,
+		   const char *buf, size_t count)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	unsigned long flags, value;
+
+	if (kstrtol(buf, 0, &value))
+		return -EINVAL;
+
+	if (value < UFSHCD_MIN_SLOWIO_US)
+		return -EINVAL;
+	spin_lock_irqsave(hba->host->host_lock, flags);
+	hba->slowio_us = value;
+	spin_unlock_irqrestore(hba->host->host_lock, flags);
+	return count;
+}
+
+static ssize_t
+slowio_us_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	return snprintf(buf, PAGE_SIZE, "%lld\n", hba->slowio_us);
+}
+
+static ssize_t
+slowio_cnt_store(struct device *dev, struct device_attribute *attr,
+		   const char *buf, size_t count)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	unsigned long flags;
+
+	spin_lock_irqsave(hba->host->host_lock, flags);
+	hba->slowio_cnt = 0;
+	spin_unlock_irqrestore(hba->host->host_lock, flags);
+	return count;
+}
+
+static ssize_t
+slowio_cnt_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	return snprintf(buf, PAGE_SIZE, "%lld\n", hba->slowio_cnt);
+}
+
+enum {
+	MANUAL_GC_OFF = 0,
+	MANUAL_GC_ON,
+	MANUAL_GC_DISABLE,
+	MANUAL_GC_ENABLE,
+	MANUAL_GC_MAX,
+};
+
+static ssize_t
+manual_gc_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	u32 status = MANUAL_GC_OFF;
+	int err = 0;
+
+	if (hba->manual_gc.state == MANUAL_GC_DISABLE)
+		return scnprintf(buf, PAGE_SIZE, "%s", "disabled\n");
+
+	pm_runtime_get_sync(hba->dev);
+
+	down_read(&hba->query_lock);
+	if (!ufshcd_is_link_hibern8(hba))
+		err = ufshcd_query_attr_retry(hba, UPIU_QUERY_OPCODE_READ_ATTR,
+			QUERY_ATTR_IDN_MANUAL_GC_STATUS, 0, 0, &status);
+	up_read(&hba->query_lock);
+	pm_runtime_mark_last_busy(hba->dev);
+	pm_runtime_put_noidle(hba->dev);
+	if (err) {
+		hba->manual_gc.state = MANUAL_GC_DISABLE;
+		return scnprintf(buf, PAGE_SIZE, "%s", "disabled\n");
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%s",
+			status == MANUAL_GC_OFF ? "off\n" : "on\n");
+}
+
+static ssize_t
+manual_gc_store(struct device *dev, struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	enum query_opcode opcode;
+	u32 value;
+	int err;
+
+	if (kstrtou32(buf, 0, &value))
+		return -EINVAL;
+
+	if (value >= MANUAL_GC_MAX)
+		return -EINVAL;
+
+	if (value == MANUAL_GC_DISABLE || value == MANUAL_GC_ENABLE) {
+		hba->manual_gc.state = value;
+		return count;
+	}
+	if (hba->manual_gc.state == MANUAL_GC_DISABLE)
+		return count;
+
+	pm_runtime_get_sync(hba->dev);
+
+	down_read(&hba->query_lock);
+	if (ufshcd_is_link_hibern8(hba)) {
+		up_read(&hba->query_lock);
+		pm_runtime_put_noidle(hba->dev);
+		return -EAGAIN;
+	}
+	up_read(&hba->query_lock);
+
+	ufshcd_hold(hba, false);
+
+	opcode = (value == MANUAL_GC_ON) ? UPIU_QUERY_OPCODE_SET_FLAG:
+					UPIU_QUERY_OPCODE_CLEAR_FLAG;
+	err = ufshcd_query_flag_retry(hba, opcode,
+				QUERY_FLAG_IDN_MANUAL_GC_CONT, NULL);
+	ufshcd_release(hba, false);
+	if (err || !ufshcd_is_auto_hibern8_supported(hba)) {
+		pm_runtime_mark_last_busy(hba->dev);
+		pm_runtime_put_noidle(hba->dev);
+		hba->manual_gc.state = MANUAL_GC_DISABLE;
+	} else {
+		/* pm_runtime_put_sync in delay_ms */
+		hrtimer_start(&hba->manual_gc.hrtimer,
+			ms_to_ktime(hba->manual_gc.delay_ms),
+			HRTIMER_MODE_REL);
+	}
+	return count;
+}
+
+static ssize_t
+manual_gc_hold_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%lu\n", hba->manual_gc.delay_ms);
+}
+
+static ssize_t
+manual_gc_hold_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	unsigned long value;
+
+	if (kstrtoul(buf, 0, &value))
+		return -EINVAL;
+
+	hba->manual_gc.delay_ms = value;
+	return count;
+}
+
+static enum hrtimer_restart ufshcd_mgc_hrtimer_handler(struct hrtimer *timer)
+{
+	struct ufs_hba *hba = container_of(timer, struct ufs_hba,
+					manual_gc.hrtimer);
+
+	queue_work(hba->manual_gc.mgc_workq, &hba->manual_gc.hibern8_work);
+	return HRTIMER_NORESTART;
+}
+
+static void ufshcd_mgc_hibern8_work(struct work_struct *work)
+{
+	struct ufs_hba *hba = container_of(work, struct ufs_hba,
+						manual_gc.hibern8_work);
+	pm_runtime_mark_last_busy(hba->dev);
+	pm_runtime_put_noidle(hba->dev);
+}
+
+static void ufshcd_init_manual_gc(struct ufs_hba *hba)
+{
+	struct ufs_manual_gc *mgc = &hba->manual_gc;
+	char wq_name[sizeof("ufs_mgc_hibern8_work")];
+
+	if (!ufshcd_is_auto_hibern8_supported(hba)) {
+		hba->manual_gc.state = MANUAL_GC_DISABLE;
+		return;
+	}
+
+	mgc->state = MANUAL_GC_ENABLE;
+	mgc->delay_ms = UFSHCD_MANUAL_GC_HOLD_HIBERN8;
+
+	hrtimer_init(&mgc->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	mgc->hrtimer.function = ufshcd_mgc_hrtimer_handler;
+
+	INIT_WORK(&mgc->hibern8_work, ufshcd_mgc_hibern8_work);
+	snprintf(wq_name, ARRAY_SIZE(wq_name), "ufs_mgc_hibern8_work_%d",
+			hba->host->host_no);
+	hba->manual_gc.mgc_workq = create_singlethread_workqueue(wq_name);
+}
+
+static void ufshcd_exit_manual_gc(struct ufs_hba *hba)
+{
+	if (!ufshcd_is_auto_hibern8_supported(hba))
+		return;
+
+	hrtimer_cancel(&hba->manual_gc.hrtimer);
+	cancel_work_sync(&hba->manual_gc.hibern8_work);
+	destroy_workqueue(hba->manual_gc.mgc_workq);
+}
+
+static DEVICE_ATTR_RW(rpm_lvl);
+static DEVICE_ATTR_RW(spm_lvl);
+static DEVICE_ATTR_RW(latency_hist);
+static DEVICE_ATTR_RW(slowio_us);
+static DEVICE_ATTR_RW(slowio_cnt);
+static DEVICE_ATTR_RW(manual_gc);
+static DEVICE_ATTR_RW(manual_gc_hold);
+
+static struct attribute *ufshcd_attrs[] = {
+	&dev_attr_rpm_lvl.attr,
+	&dev_attr_spm_lvl.attr,
+	&dev_attr_latency_hist.attr,
+	&dev_attr_slowio_us.attr,
+	&dev_attr_slowio_cnt.attr,
+	&dev_attr_manual_gc.attr,
+	&dev_attr_manual_gc_hold.attr,
+	NULL
+};
+
+static const struct attribute_group ufshcd_attr_group = {
+	.attrs = ufshcd_attrs,
+};
+
 static inline void ufshcd_add_sysfs_nodes(struct ufs_hba *hba)
 {
-	ufshcd_add_rpm_lvl_sysfs_nodes(hba);
-	ufshcd_add_spm_lvl_sysfs_nodes(hba);
-	ufshcd_add_desc_sysfs_nodes(hba->dev);
+	if (sysfs_create_group(&hba->dev->kobj, &ufshcd_attr_group))
+		dev_err(hba->dev, "Failed to create sysfs group\n");
+        ufshcd_add_desc_sysfs_nodes(hba->dev);
 }
 
 static void ufshcd_shutdown_clkscaling(struct ufs_hba *hba)
@@ -9421,61 +9727,6 @@ out:
 }
 EXPORT_SYMBOL(ufshcd_shutdown);
 
-/*
- * Values permitted 0, 1, 2.
- * 0 -> Disable IO latency histograms (default)
- * 1 -> Enable IO latency histograms
- * 2 -> Zero out IO latency histograms
- */
-static ssize_t
-latency_hist_store(struct device *dev, struct device_attribute *attr,
-		   const char *buf, size_t count)
-{
-	struct ufs_hba *hba = dev_get_drvdata(dev);
-	long value;
-
-	if (kstrtol(buf, 0, &value))
-		return -EINVAL;
-	if (value == BLK_IO_LAT_HIST_ZERO) {
-		memset(&hba->io_lat_read, 0, sizeof(hba->io_lat_read));
-		memset(&hba->io_lat_write, 0, sizeof(hba->io_lat_write));
-	} else if (value == BLK_IO_LAT_HIST_ENABLE ||
-		 value == BLK_IO_LAT_HIST_DISABLE)
-		hba->latency_hist_enabled = value;
-	return count;
-}
-
-ssize_t
-latency_hist_show(struct device *dev, struct device_attribute *attr,
-		  char *buf)
-{
-	struct ufs_hba *hba = dev_get_drvdata(dev);
-	size_t written_bytes;
-
-	written_bytes = blk_latency_hist_show("Read", &hba->io_lat_read,
-			buf, PAGE_SIZE);
-	written_bytes += blk_latency_hist_show("Write", &hba->io_lat_write,
-			buf + written_bytes, PAGE_SIZE - written_bytes);
-
-	return written_bytes;
-}
-
-static DEVICE_ATTR(latency_hist, S_IRUGO | S_IWUSR,
-		   latency_hist_show, latency_hist_store);
-
-static void
-ufshcd_init_latency_hist(struct ufs_hba *hba)
-{
-	if (device_create_file(hba->dev, &dev_attr_latency_hist))
-		dev_err(hba->dev, "Failed to create latency_hist sysfs entry\n");
-}
-
-static void
-ufshcd_exit_latency_hist(struct ufs_hba *hba)
-{
-	device_create_file(hba->dev, &dev_attr_latency_hist);
-}
-
 /**
  * ufshcd_remove - de-allocate SCSI host and host memory space
  *		data structure memory
@@ -9488,11 +9739,11 @@ void ufshcd_remove(struct ufs_hba *hba)
 	ufshcd_disable_intr(hba, hba->intr_mask);
 	ufshcd_hba_stop(hba, true);
 
+	ufshcd_exit_manual_gc(hba);
 	ufshcd_exit_clk_gating(hba);
 	ufshcd_exit_hibern8_on_idle(hba);
 	if (ufshcd_is_clkscaling_supported(hba)) {
 		device_remove_file(hba->dev, &hba->clk_scaling.enable_attr);
-		ufshcd_exit_latency_hist(hba);
 		devfreq_remove_device(hba->devfreq);
 	}
 	ufshcd_hba_exit(hba);
@@ -10097,6 +10348,9 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 
 	hba->max_pwr_info.is_valid = false;
 
+	/* Set default slow io value. */
+	hba->slowio_us = UFSHCD_DEFAULT_SLOWIO_US;
+
 	/* Initailize wait queue for task management */
 	init_waitqueue_head(&hba->tm_wq);
 	init_waitqueue_head(&hba->tm_tag_wq);
@@ -10113,12 +10367,14 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	mutex_init(&hba->dev_cmd.lock);
 
 	init_rwsem(&hba->lock);
+	init_rwsem(&hba->query_lock);
 
 	/* Initialize device management tag acquire wait queue */
 	init_waitqueue_head(&hba->dev_cmd.tag_wq);
 
 	ufshcd_init_clk_gating(hba);
 	ufshcd_init_hibern8_on_idle(hba);
+	ufshcd_init_manual_gc(hba);
 
 	/*
 	 * In order to avoid any spurious interrupt immediately after
@@ -10200,8 +10456,6 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	/* Hold auto suspend until async scan completes */
 	pm_runtime_get_sync(dev);
 
-	ufshcd_init_latency_hist(hba);
-
 	/*
 	 * We are assuming that device wasn't put in sleep/power-down
 	 * state exclusively during the boot stage before kernel.
@@ -10223,8 +10477,8 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 out_remove_scsi_host:
 	scsi_remove_host(hba->host);
 exit_gating:
+	ufshcd_exit_manual_gc(hba);
 	ufshcd_exit_clk_gating(hba);
-	ufshcd_exit_latency_hist(hba);
 out_disable:
 	hba->is_irq_enabled = false;
 	ufshcd_hba_exit(hba);

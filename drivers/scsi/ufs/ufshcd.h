@@ -387,6 +387,15 @@ struct ufs_hba_variant {
 	struct ufs_hba_pm_qos_variant_ops	*pm_qos_vops;
 };
 
+/* for manual gc */
+struct ufs_manual_gc {
+	int state;
+	struct hrtimer hrtimer;
+	unsigned long delay_ms;
+	struct work_struct hibern8_work;
+	struct workqueue_struct *mgc_workq;
+};
+
 /* clock gating state  */
 enum clk_gating_state {
 	CLKS_OFF,
@@ -768,8 +777,6 @@ struct ufs_hba {
 	int rpm_lvl;
 	/* Desired UFS power management level during system PM */
 	int spm_lvl;
-	struct device_attribute rpm_lvl_attr;
-	struct device_attribute spm_lvl_attr;
 	int pm_op_in_progress;
 
 	struct ufshcd_lrb *lrb;
@@ -942,6 +949,7 @@ struct ufs_hba {
 
 	/* sync b/w diff contexts */
 	struct rw_semaphore lock;
+	struct rw_semaphore query_lock;
 	unsigned long shutdown_in_prog;
 
 	struct reset_control *core_reset;
@@ -957,6 +965,12 @@ struct ufs_hba {
 	struct io_latency_state io_lat_read;
 	struct io_latency_state io_lat_write;
 	bool restore_needed;
+
+	/* To monitor slow UFS I/O requests. */
+	u64 slowio_us;
+	u64 slowio_cnt;
+
+	struct ufs_manual_gc manual_gc;
 };
 
 static inline void ufshcd_mark_shutdown_ongoing(struct ufs_hba *hba)
@@ -1424,5 +1438,8 @@ static inline void ufshcd_vops_pm_qos_req_end(struct ufs_hba *hba,
 	if (hba->var && hba->var->pm_qos_vops && hba->var->pm_qos_vops->req_end)
 		hba->var->pm_qos_vops->req_end(hba, req, lock);
 }
+
+#define UFSHCD_MIN_SLOWIO_US		(1000)     /* 1 ms */
+#define UFSHCD_DEFAULT_SLOWIO_US	(10000000) /* 10 seconds */
 
 #endif /* End of Header */
